@@ -12,12 +12,14 @@ KNOWN_BLOCKS = frozenset({
     "scenario",
     "what_if",
     "architecture",
+    "validate_model",
 })
 
 
 class QueueMessage(BaseModel):
     project_id: UUID
     block: str
+    payload: dict[str, Any] | None = None
 
 
 class HookPayload(BaseModel):

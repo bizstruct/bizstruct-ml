@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -12,7 +12,12 @@ class ProjectState(BaseModel):
     title: str
     idea: str
     status: str
-    translation_key: str = "en"
+    translation_key: str | None = "en"
+
+    @field_validator("translation_key", mode="before")
+    @classmethod
+    def coerce_translation_key(cls, v: object) -> str:
+        return str(v) if v else "en"
     models_options: dict[str, Any] | None = None
     canvas_data: dict[str, Any] | None = None
     empathy_map: dict[str, Any] | None = None

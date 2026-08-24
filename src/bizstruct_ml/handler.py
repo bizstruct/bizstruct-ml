@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from bizstruct_ml.backend_client import BackendClient, ProjectNotFoundError, BackendUnavailableError, HookFailedError
 from bizstruct_ml.generators.registry import GENERATORS
+from bizstruct_ml.generators.validate_model import run_validate_model
 from bizstruct_ml.llm.client import LLMError
 from bizstruct_ml.pubsub_client import PubSubClient
 from bizstruct_ml.schemas.messages import HookPayload, QueueMessage, KNOWN_BLOCKS
@@ -47,6 +48,11 @@ async def handle_message(
         return
 
     bound_log.info("message_received")
+
+    # validate_model is a special non-generation block handled separately
+    if block == "validate_model":
+        await _handle_validate_model(msg, sb_message, backend, bound_log)
+        return
 
     # Step 2: fetch project
     try:
@@ -113,3 +119,46 @@ async def handle_message(
 
     await sb_message.complete_message(sb_message)
     bound_log.info("message_completed")
+
+
+async def _handle_validate_model(
+    msg: QueueMessage,
+    sb_message: Any,
+    backend: BackendClient,
+    bound_log: Any,
+) -> None:
+    project_id = str(msg.project_id)
+    payload = msg.payload or {}
+    model_id = payload.get("model_id", "")
+
+    bound_log.info("validate_model_started", model_id=model_id)
+    start = time.monotonic()
+
+    error: str | None = None
+    result_data: dict | None = None
+    try:
+        result_data = await run_validate_model(payload)
+        bound_log.info("validate_model_succeeded", duration_s=round(time.monotonic() - start, 2))
+    except (LLMError, ValidationError, Exception) as e:
+        error = str(e)
+        bound_log.error("validate_model_failed", error=error, duration_s=round(time.monotonic() - start, 2))
+
+    hook_status = "success" if result_data is not None else "failed"
+    hook = HookPayload(
+        project_id=msg.project_id,
+        block="validate_model",
+        status=hook_status,  # type: ignore[arg-type]
+        data=result_data,
+        error=error,
+    )
+
+    try:
+        await backend.send_hook(hook)
+        bound_log.info("validate_hook_sent", status=hook_status)
+    except HookFailedError as e:
+        bound_log.error("validate_hook_failed", error=str(e))
+        await sb_message.abandon_message(sb_message)
+        return
+
+    await sb_message.complete_message(sb_message)
+    bound_log.info("validate_model_completed")
