@@ -17,6 +17,7 @@ dependencies = [
     "tenacity>=8.4.0",
     "structlog>=24.2.0",
     "bizstruct-domain @ git+https://github.com/bizstruct/bizstruct-domain@v0.1.0",
+    "langfuse>=4.0.0",
 ]
 
 [project.optional-dependencies]

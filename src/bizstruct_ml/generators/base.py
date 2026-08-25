@@ -6,6 +6,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from bizstruct_ml.config import settings
 from bizstruct_ml.llm.client import LLMClient, LLMError
+from bizstruct_ml.llm.prompts._shared import context_blocks_used
+from bizstruct_ml.observability import tracing
 from bizstruct_ml.schemas.project import ProjectState
 from bizstruct_ml.schemas.blocks.models_options import ModelsOptions
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData
@@ -116,6 +118,12 @@ class BaseGenerator:
     async def generate(self, project: ProjectState) -> dict:
         llm = self._get_llm()
 
+        with tracing.span("build_prompt") as bp_span:
+            messages = self.build_prompt(project)
+            bp_span.update(output={"context_blocks": context_blocks_used(project)})
+
+        attempts = {"n": 0}
+
         @retry(
             stop=stop_after_attempt(settings.llm_max_retries + 1),
             wait=wait_exponential(min=2, max=8),
@@ -123,11 +131,34 @@ class BaseGenerator:
             reraise=True,
         )
         async def _run() -> dict:
-            messages = self.build_prompt(project)
-            result = await llm.generate_structured(messages, self.schema)
-            return self.postprocess(result)
+            attempts["n"] += 1
+            with tracing.generation_span(
+                "llm_call",
+                model=llm.model_name,
+                input=messages,
+                metadata={"attempt": attempts["n"]},
+            ) as gen_span:
+                result = await llm.generate_structured(messages, self.schema)
+                gen_span.update(
+                    output=result.model_dump(mode="json"),
+                    usage_details=llm.last_usage,
+                )
+            with tracing.span("postprocess") as pp_span:
+                data = self.postprocess(result)
+                pp_span.update(output=data)
+            return data
 
-        return await _run()
+        try:
+            result_data = await _run()
+        finally:
+            # Retries here mean tenacity caught a ValidationError (bad
+            # schema from the LLM) or LLMError and re-ran the whole
+            # build->call->postprocess step. attempts["n"] - 1 is the retry
+            # count; a direct trace attribute, since it's a straight
+            # indicator of prompt quality for this block.
+            tracing.update_current_span(metadata={"llm_retry_count": attempts["n"] - 1})
+
+        return result_data
 
 
 class ModelsOptionsGenerator(BaseGenerator):

@@ -25,13 +25,32 @@ def build_messages(project: ProjectState) -> list[dict]:
     user = f"""Project: {project.title}
 Idea: {project.idea}{context_section(project)}
 
-Classify this business model's architecture, using the already-generated
-Business Model Canvas above as the basis for both choices.
+Classify this business model's architecture. Base both choices on the
+Business Model Canvas above, not on the idea in isolation — the epicenter
+and pattern describe how the CANVAS is structured.
 
-1. epicenter — the primary driver of business model innovation. Choose exactly one:
+1. epicenter — the primary driver of business model innovation. Identify it
+   by looking at which canvas section the model's differentiation actually
+   comes from, then choose exactly one:
 {_EPICENTERS}
+   - resource_driven: the canvas's key_resources/key_activities are unusually
+     specific or hard to replicate — that's the driver, name which resource.
+   - offer_driven: value_propositions is where the real innovation is; the
+     rest of the canvas exists to support that offer.
+   - customer_driven: customer_segments or channels defines the model — a
+     specific segment/access point that shapes everything else.
+   - finance_driven: revenue_streams or cost_structure is the novel part
+     (a pricing mechanism, a cost structure others can't match).
+   - multiple_epicenter: two or more of the above are shifting together —
+     name which canvas sections.
+   The rationale must name the specific canvas section(s) that justify the
+   choice, not just restate the idea.
 
-2. pattern — the dominant business model pattern. Choose exactly one:
+2. pattern — the dominant business model pattern, inferred from how the
+   canvas's key_partners, channels, and revenue_streams are structured (a
+   platform pattern needs multiple customer_segments/channels connected to
+   each other; a free/subsidized pattern needs one revenue_stream fed by a
+   segment that pays nothing). Choose exactly one:
 {_PATTERNS}
 
 3. pattern_subtype:

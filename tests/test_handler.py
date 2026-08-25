@@ -310,3 +310,45 @@ async def test_pubsub_failure_does_not_prevent_complete():
 
     # pubsub failure is swallowed inside PubSubClient.publish, message still completes
     sb_msg.complete_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_completes_with_a_broken_langfuse_client():
+    """Full handler flow with tracing 'enabled' but pointed at a client that
+    raises on every call — generation must complete exactly as if tracing
+    were off."""
+    from bizstruct_ml.observability import tracing
+
+    class _ExplodingClient:
+        def start_as_current_observation(self, **kwargs):
+            raise RuntimeError("langfuse down")
+
+        def update_current_span(self, **kwargs):
+            raise RuntimeError("langfuse down")
+
+        def flush(self):
+            raise RuntimeError("langfuse down")
+
+    tracing._client_init_attempted = True
+    tracing._client = _ExplodingClient()
+    try:
+        project = _make_project(block_name="canvas_data", block_value=None)
+        msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+        sb_msg = _make_sb_message()
+        sb_msg.delivery_count = 1
+        backend = _make_backend(project=project)
+        pubsub = _make_pubsub()
+
+        with patch(
+            "bizstruct_ml.handler.GENERATORS",
+            {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key_partners": []}))},
+        ):
+            await handle_message(msg, sb_msg, backend, pubsub)
+
+        backend.send_hook.assert_awaited_once()
+        sb_msg.complete_message.assert_awaited_once()
+        sb_msg.abandon_message.assert_not_called()
+        sb_msg.dead_letter_message.assert_not_called()
+    finally:
+        tracing._client = None
+        tracing._client_init_attempted = False
