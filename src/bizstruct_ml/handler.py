@@ -5,7 +5,13 @@ from typing import Any
 import structlog
 from pydantic import ValidationError
 
-from bizstruct_ml.backend_client import BackendClient, ProjectNotFoundError, BackendUnavailableError, HookFailedError
+from bizstruct_ml.backend_client import (
+    BackendClient,
+    BackendUnavailableError,
+    HookFailedError,
+    HookRejectedError,
+    ProjectNotFoundError,
+)
 from bizstruct_ml.generators.registry import GENERATORS
 from bizstruct_ml.generators.validate_model import run_validate_model
 from bizstruct_ml.llm.client import LLMError
@@ -13,6 +19,49 @@ from bizstruct_ml.pubsub_client import PubSubClient
 from bizstruct_ml.schemas.messages import HookPayload, QueueMessage, KNOWN_BLOCKS
 
 log = structlog.get_logger()
+
+
+async def _send_hook(
+    backend: BackendClient,
+    hook: HookPayload,
+    sb_message: Any,
+    bound_log: Any,
+    log_prefix: str,
+) -> bool:
+    """Send the hook and settle the queue message on failure.
+
+    Returns True if the hook was accepted (caller should proceed to
+    complete_message). Returns False if this function already settled the
+    message (dead-lettered a rejected payload, or abandoned a transient
+    failure) — the caller must return immediately without completing.
+    """
+    try:
+        await backend.send_hook(hook)
+        bound_log.info(f"{log_prefix}_sent", status=hook.status)
+        return True
+    except HookRejectedError as e:
+        # The backend has definitively rejected this payload (422 schema
+        # violation, 404 project gone, any other 4xx). Retrying would
+        # regenerate/resend the exact same rejected content — dead-letter
+        # immediately instead of burning through the queue's retry budget.
+        bound_log.error(
+            f"{log_prefix}_rejected",
+            status_code=e.status_code,
+            body=e.body,
+        )
+        await sb_message.dead_letter_message(
+            sb_message,
+            reason=f"HookRejected_{e.status_code}",
+            error_description=f"HTTP {e.status_code}: {e.body}",
+        )
+        return False
+    except HookFailedError as e:
+        # HookUnavailableError (5xx, timeout, network error) and anything
+        # else uncategorized: the backend, or the network to it, is having a
+        # bad time — worth abandoning so the queue redelivers.
+        bound_log.warning(f"{log_prefix}_failed", error=str(e))
+        await sb_message.abandon_message(sb_message)
+        return False
 
 
 async def handle_message(
@@ -102,12 +151,7 @@ async def handle_message(
         error=generation_error,
     )
 
-    try:
-        await backend.send_hook(hook)
-        bound_log.info("hook_sent", status=hook_status)
-    except HookFailedError as e:
-        bound_log.error("hook_failed", error=str(e))
-        await sb_message.abandon_message(sb_message)
+    if not await _send_hook(backend, hook, sb_message, bound_log, "hook"):
         return
 
     # Notify frontend via PubSub — failure must not block completion
@@ -152,12 +196,7 @@ async def _handle_validate_model(
         error=error,
     )
 
-    try:
-        await backend.send_hook(hook)
-        bound_log.info("validate_hook_sent", status=hook_status)
-    except HookFailedError as e:
-        bound_log.error("validate_hook_failed", error=str(e))
-        await sb_message.abandon_message(sb_message)
+    if not await _send_hook(backend, hook, sb_message, bound_log, "validate_hook"):
         return
 
     await sb_message.complete_message(sb_message)

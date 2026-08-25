@@ -4,7 +4,13 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from bizstruct_ml.backend_client import ProjectNotFoundError, BackendUnavailableError, HookFailedError
+from bizstruct_ml.backend_client import (
+    ProjectNotFoundError,
+    BackendUnavailableError,
+    HookFailedError,
+    HookRejectedError,
+    HookUnavailableError,
+)
 from bizstruct_ml.handler import handle_message
 from bizstruct_ml.schemas.project import ProjectState
 
@@ -153,6 +159,114 @@ async def test_hook_failed_abandons():
     sb_msg.abandon_message.assert_awaited_once()
     sb_msg.complete_message.assert_not_called()
     pubsub.publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hook_422_dead_letters_without_abandon_or_regeneration():
+    project = _make_project(block_name="canvas_data", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    sb_msg = _make_sb_message()
+    backend = _make_backend(project=project)
+    backend.send_hook = AsyncMock(
+        side_effect=HookRejectedError(
+            status_code=422,
+            body='{"detail": [{"loc": ["epicenter"], "msg": "invalid"}]}',
+            message="Hook rejected with 422",
+        )
+    )
+    pubsub = _make_pubsub()
+
+    generate_mock = AsyncMock(return_value={"key": "val"})
+    with patch("bizstruct_ml.handler.GENERATORS", {"canvas_data": MagicMock(generate=generate_mock)}):
+        await handle_message(msg, sb_msg, backend, pubsub)
+
+    sb_msg.dead_letter_message.assert_awaited_once()
+    sb_msg.abandon_message.assert_not_called()
+    sb_msg.complete_message.assert_not_called()
+    # A single generation call — a 422 must not trigger any re-generation.
+    generate_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_hook_500_abandons_not_dead_lettered():
+    project = _make_project(block_name="canvas_data", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    sb_msg = _make_sb_message()
+    backend = _make_backend(project=project)
+    backend.send_hook = AsyncMock(side_effect=HookUnavailableError("Hook returned 500"))
+    pubsub = _make_pubsub()
+
+    with patch(
+        "bizstruct_ml.handler.GENERATORS",
+        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+    ):
+        await handle_message(msg, sb_msg, backend, pubsub)
+
+    sb_msg.abandon_message.assert_awaited_once()
+    sb_msg.dead_letter_message.assert_not_called()
+    sb_msg.complete_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hook_timeout_abandons():
+    project = _make_project(block_name="canvas_data", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    sb_msg = _make_sb_message()
+    backend = _make_backend(project=project)
+    backend.send_hook = AsyncMock(side_effect=HookUnavailableError("Timeout sending hook"))
+    pubsub = _make_pubsub()
+
+    with patch(
+        "bizstruct_ml.handler.GENERATORS",
+        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+    ):
+        await handle_message(msg, sb_msg, backend, pubsub)
+
+    sb_msg.abandon_message.assert_awaited_once()
+    sb_msg.dead_letter_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hook_404_dead_letters():
+    project = _make_project(block_name="canvas_data", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    sb_msg = _make_sb_message()
+    backend = _make_backend(project=project)
+    backend.send_hook = AsyncMock(
+        side_effect=HookRejectedError(status_code=404, body="Project not found", message="Hook rejected with 404")
+    )
+    pubsub = _make_pubsub()
+
+    with patch(
+        "bizstruct_ml.handler.GENERATORS",
+        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+    ):
+        await handle_message(msg, sb_msg, backend, pubsub)
+
+    sb_msg.dead_letter_message.assert_awaited_once()
+    sb_msg.abandon_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hook_rejected_dead_letter_reason_contains_status_code():
+    project = _make_project(block_name="canvas_data", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    sb_msg = _make_sb_message()
+    backend = _make_backend(project=project)
+    backend.send_hook = AsyncMock(
+        side_effect=HookRejectedError(status_code=422, body="schema violation", message="Hook rejected with 422")
+    )
+    pubsub = _make_pubsub()
+
+    with patch(
+        "bizstruct_ml.handler.GENERATORS",
+        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+    ):
+        await handle_message(msg, sb_msg, backend, pubsub)
+
+    _, kwargs = sb_msg.dead_letter_message.call_args
+    assert "422" in kwargs["reason"]
+    assert "422" in kwargs["error_description"]
 
 
 @pytest.mark.asyncio
