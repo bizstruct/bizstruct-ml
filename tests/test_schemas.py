@@ -90,23 +90,41 @@ CANVAS_DATA_EXAMPLE = {
     ],
 }
 
+def _empathy_item(i: int, text_uk: str, text_en: str) -> dict:
+    return {"id": i, "text_uk": text_uk, "text_en": text_en}
+
+
 EMPATHY_MAP_EXAMPLE = {
-    "uk": {
-        "says": [{"id": 1, "text": "Звітність займає 3 тижні"}, {"id": 2, "text": "Потрібен автоматизований процес"}],
-        "thinks": [{"id": 1, "text": "Штраф за порушення вимог"}, {"id": 2, "text": "Конкуренти вже автоматизували"}],
-        "does": [{"id": 1, "text": "Збирає дані вручну в Excel"}, {"id": 2, "text": "Наймає зовнішніх консультантів"}],
-        "feels": [{"id": 1, "text": "Стрес перед дедлайнами"}, {"id": 2, "text": "Невпевненість у правильності даних"}],
-        "pains": [{"id": 1, "text": "80 годин/квартал на збір даних"}, {"id": 2, "text": "Помилки у звітах = ризик штрафів"}],
-        "gains": [{"id": 1, "text": "Автоматичний збір даних"}, {"id": 2, "text": "Відповідність всім стандартам GRI/TCFD"}],
-    },
-    "en": {
-        "says": [{"id": 1, "text": "Reporting takes 3 weeks"}, {"id": 2, "text": "Need an automated process"}],
-        "thinks": [{"id": 1, "text": "Fine for non-compliance"}, {"id": 2, "text": "Competitors already automated"}],
-        "does": [{"id": 1, "text": "Collects data manually in Excel"}, {"id": 2, "text": "Hires external consultants"}],
-        "feels": [{"id": 1, "text": "Stressed before deadlines"}, {"id": 2, "text": "Uncertain about data accuracy"}],
-        "pains": [{"id": 1, "text": "80 hours/quarter on data collection"}, {"id": 2, "text": "Errors in reports = fine risk"}],
-        "gains": [{"id": 1, "text": "Automated data collection"}, {"id": 2, "text": "Compliance with GRI/TCFD standards"}],
-    },
+    "says": [
+        _empathy_item(1, "Звітність займає 3 тижні", "Reporting takes 3 weeks"),
+        _empathy_item(2, "Потрібен автоматизований процес", "Need an automated process"),
+        _empathy_item(3, "Ми відстаємо від конкурентів", "We're falling behind competitors"),
+    ],
+    "thinks": [
+        _empathy_item(1, "Штраф за порушення вимог", "Fine for non-compliance"),
+        _empathy_item(2, "Конкуренти вже автоматизували", "Competitors already automated"),
+        _empathy_item(3, "Це має бути простіше", "This should be simpler"),
+    ],
+    "does": [
+        _empathy_item(1, "Збирає дані вручну в Excel", "Collects data manually in Excel"),
+        _empathy_item(2, "Наймає зовнішніх консультантів", "Hires external consultants"),
+        _empathy_item(3, "Перевіряє звіт кілька разів", "Double-checks the report repeatedly"),
+    ],
+    "feels": [
+        _empathy_item(1, "Стрес перед дедлайнами", "Stressed before deadlines"),
+        _empathy_item(2, "Невпевненість у правильності даних", "Uncertain about data accuracy"),
+        _empathy_item(3, "Втома від рутинної роботи", "Fatigued by repetitive work"),
+    ],
+    "pains": [
+        _empathy_item(1, "80 годин/квартал на збір даних", "80 hours/quarter on data collection"),
+        _empathy_item(2, "Помилки у звітах = ризик штрафів", "Errors in reports = fine risk"),
+        _empathy_item(3, "Дані розкидані по різних системах", "Data scattered across systems"),
+    ],
+    "gains": [
+        _empathy_item(1, "Автоматичний збір даних", "Automated data collection"),
+        _empathy_item(2, "Відповідність всім стандартам GRI/TCFD", "Compliance with GRI/TCFD standards"),
+        _empathy_item(3, "Більше часу на аналіз, не збір", "More time for analysis, not collection"),
+    ],
 }
 
 HYPOTHESES_EXAMPLE = {
@@ -258,8 +276,9 @@ def test_canvas_data_schema():
 
 def test_empathy_map_schema():
     result = EmpathyMap.model_validate(EMPATHY_MAP_EXAMPLE)
-    assert len(result.uk.says) == 2
-    assert len(result.en.pains) == 2
+    assert len(result.says) == 3
+    assert len(result.pains) == 3
+    assert result.pains[0].text_en == "80 hours/quarter on data collection"
 
 
 def test_hypotheses_schema():

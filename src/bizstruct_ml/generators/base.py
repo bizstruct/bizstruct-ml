@@ -14,6 +14,7 @@ from bizstruct_ml.schemas.blocks.canvas_data import CanvasData
 from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from bizstruct_domain.blocks.architecture import Architecture
+from bizstruct_domain.blocks.empathy_map import EmpathyMap
 from bizstruct_ml.schemas.blocks.pitch import Pitch, INVESTOR_ORDER, CLIENT_ORDER
 from bizstruct_ml.schemas.blocks.scenario import Scenario
 
@@ -187,14 +188,14 @@ class CanvasDataGenerator(BaseGenerator):
 
 class EmpathyMapGenerator(BaseGenerator):
     block = "empathy_map"
-
-    def __init__(self) -> None:
-        from bizstruct_ml.schemas.blocks.empathy_map import EmpathyMap
-        self.schema = EmpathyMap
+    schema = EmpathyMap
 
     def build_prompt(self, project: ProjectState) -> list[dict]:
         from bizstruct_ml.llm.prompts.empathy_map import build_messages
         return build_messages(project)
+
+    # No postprocessing needed — bizstruct_domain.blocks.empathy_map.EmpathyMap
+    # has no derived/status fields to fix up.
 
 
 class HypothesesGenerator(BaseGenerator):

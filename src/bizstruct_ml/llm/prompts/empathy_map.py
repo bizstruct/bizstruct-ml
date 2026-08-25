@@ -15,12 +15,16 @@ a monetization model, a canvas section, or any other detail that hasn't
 been generated — later blocks will build on what you produce here, not the
 other way around.
 
+Structure: six sections — says, thinks, does, feels, pains, gains.
+
 Rules:
-- Use a real job title/role as the persona
-- 2-3 items in each of the 6 categories: says, thinks, does, feels, pains, gains
-- Each item: id (integer starting from 1), text
-- Items must be grounded in specific pains from the idea
-- Generate BOTH Ukrainian (uk) and English (en) versions"""
+- Use a real job title/role as the persona (reflected consistently across items)
+- 3-6 items per section
+- Each item: id (integer starting from 1 within its section), and BOTH a
+  Ukrainian (text_uk) and English (text_en) version of the same statement —
+  translate, don't write unrelated content per language
+- Each item text must be a full statement, not a single word or fragment
+- Items must be grounded in specific pains from the idea"""
     return [
         {"role": "system", "content": bilingual_system()},
         {"role": "user", "content": user},
