@@ -7,7 +7,7 @@ from bizstruct_ml.schemas.project import ProjectState
 
 BLOCK_LABELS = {
     "models_options": "Business Model Options",
-    "canvas_data": "Business Model Canvas",
+    "canvas": "Business Model Canvas",
     "empathy_map": "Empathy Map",
     "hypotheses": "Hypotheses",
     "pitch": "Pitch",
@@ -15,12 +15,6 @@ BLOCK_LABELS = {
     "what_if": "What-If Scenarios",
     "architecture": "Business Model Architecture",
 }
-
-# This repo's wire-level block ids predate bizstruct_domain and don't all
-# match its stage ids one-for-one — `canvas_data` here is `canvas` in
-# chain.py. Same override used in generators/registry.py.
-_STAGE_ID_OVERRIDES: dict[str, str] = {"canvas_data": "canvas"}
-_BLOCK_ID_BY_STAGE_ID: dict[str, str] = {v: k for k, v in _STAGE_ID_OVERRIDES.items()}
 
 
 def _context_block_order() -> tuple[str, ...]:
@@ -33,12 +27,7 @@ def _context_block_order() -> tuple[str, ...]:
     were actually generated in. Fixed here rather than left as a prompt
     wording problem, per this task's B3.
     """
-    order: list[str] = []
-    for stage_id in topological_order(pro=False):
-        block_id = _BLOCK_ID_BY_STAGE_ID.get(stage_id, stage_id)
-        if block_id in BLOCK_LABELS:
-            order.append(block_id)
-    return tuple(order)
+    return tuple(stage_id for stage_id in topological_order(pro=False) if stage_id in BLOCK_LABELS)
 
 
 _CONTEXT_BLOCK_ORDER: tuple[str, ...] = _context_block_order()

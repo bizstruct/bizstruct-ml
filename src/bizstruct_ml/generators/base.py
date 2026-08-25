@@ -9,8 +9,8 @@ from bizstruct_ml.llm.client import LLMClient, LLMError
 from bizstruct_ml.llm.prompts._shared import context_blocks_used
 from bizstruct_ml.observability import tracing
 from bizstruct_ml.schemas.project import ProjectState
-from bizstruct_ml.schemas.blocks.canvas_data import CanvasData
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
+from bizstruct_domain.blocks.canvas import CanvasGenerated
 from bizstruct_domain.blocks.architecture import Architecture
 from bizstruct_domain.blocks.empathy_map import EmpathyMap
 from bizstruct_domain.blocks.scenario import Scenario
@@ -35,7 +35,7 @@ def _postprocess_models_options(data: ModelsOptions) -> dict:
     return result.model_dump(mode="json")
 
 
-def _postprocess_canvas_data(data: CanvasData) -> dict:
+def _postprocess_canvas(data: CanvasGenerated) -> dict:
     dump = data.model_dump(mode="json")
     for section_items in dump.values():
         if isinstance(section_items, list):
@@ -136,16 +136,16 @@ class ModelsOptionsGenerator(BaseGenerator):
         return _postprocess_models_options(data)  # type: ignore[arg-type]
 
 
-class CanvasDataGenerator(BaseGenerator):
-    block = "canvas_data"
-    schema = CanvasData
+class CanvasGenerator(BaseGenerator):
+    block = "canvas"
+    schema = CanvasGenerated
 
     def build_prompt(self, project: ProjectState) -> list[dict]:
-        from bizstruct_ml.llm.prompts.canvas_data import build_messages
+        from bizstruct_ml.llm.prompts.canvas import build_messages
         return build_messages(project)
 
     def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_canvas_data(data)  # type: ignore[arg-type]
+        return _postprocess_canvas(data)  # type: ignore[arg-type]
 
 
 class EmpathyMapGenerator(BaseGenerator):

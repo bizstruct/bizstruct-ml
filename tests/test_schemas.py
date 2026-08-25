@@ -2,7 +2,7 @@
 import pytest
 from bizstruct_ml.schemas.blocks import (
     ModelsOptions,
-    CanvasData,
+    CanvasGenerated,
     EmpathyMap,
     Hypotheses,
     Pitch,
@@ -54,7 +54,7 @@ MODELS_OPTIONS_EXAMPLE = {
     "selected_id": None,
 }
 
-CANVAS_DATA_EXAMPLE = {
+CANVAS_EXAMPLE = {
     "key_partners": [
         {"id": "00000000-0000-0000-0000-000000000010", "text": "ESG data providers", "is_ai_generated": True},
         {"id": "00000000-0000-0000-0000-000000000011", "text": "Regulatory bodies", "is_ai_generated": True},
@@ -252,8 +252,8 @@ def test_models_options_schema():
     assert result.selected_id is None
 
 
-def test_canvas_data_schema():
-    result = CanvasData.model_validate(CANVAS_DATA_EXAMPLE)
+def test_canvas_schema():
+    result = CanvasGenerated.model_validate(CANVAS_EXAMPLE)
     assert len(result.key_partners) == 2
     assert result.key_partners[0].is_ai_generated is True
 

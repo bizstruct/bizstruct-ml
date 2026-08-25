@@ -5,11 +5,11 @@ from pydantic import ValidationError
 
 from bizstruct_ml.generators.base import (
     _postprocess_models_options,
-    _postprocess_canvas_data,
+    _postprocess_canvas,
     _postprocess_what_if,
 )
 from bizstruct_domain.blocks.models_options import ModelsOptions, BusinessModelOption
-from bizstruct_ml.schemas.blocks.canvas_data import CanvasData, CanvasItem
+from bizstruct_domain.blocks.canvas import CanvasGenerated, CanvasCard
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from uuid import uuid4
 
@@ -71,25 +71,25 @@ def test_models_options_uuids_regenerated():
     assert all(rid not in [str(oid) for oid in original_ids] for rid in result_ids)
 
 
-def _make_canvas_item(text: str) -> CanvasItem:
-    return CanvasItem(id=uuid4(), text=text, is_ai_generated=False)
+def _make_canvas_card(text: str) -> CanvasCard:
+    return CanvasCard(id=uuid4(), text=text, is_ai_generated=False)
 
 
-def test_canvas_data_uuids_regenerated():
+def test_canvas_uuids_regenerated():
     original_id = uuid4()
-    item = CanvasItem(id=original_id, text="test", is_ai_generated=False)
-    data = CanvasData(
-        key_partners=[item, item],
-        key_activities=[item, item],
-        key_resources=[item, item],
-        value_propositions=[item, item],
-        customer_relationships=[item, item],
-        channels=[item, item],
-        customer_segments=[item, item],
-        cost_structure=[item, item],
-        revenue_streams=[item, item],
+    card = CanvasCard(id=original_id, text="A test card", is_ai_generated=False)
+    data = CanvasGenerated(
+        key_partners=[card, card],
+        key_activities=[card, card],
+        key_resources=[card, card],
+        value_propositions=[card, card],
+        customer_relationships=[card, card],
+        channels=[card, card],
+        customer_segments=[card, card],
+        cost_structure=[card, card],
+        revenue_streams=[card, card],
     )
-    result = _postprocess_canvas_data(data)
+    result = _postprocess_canvas(data)
     for items in result.values():
         for it in items:
             assert it["id"] != str(original_id)

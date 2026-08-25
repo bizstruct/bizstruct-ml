@@ -1,7 +1,7 @@
 """Startup validation: every generator in the registry must map to a known stage."""
 from bizstruct_domain.chain import STAGES
 
-from bizstruct_ml.generators.registry import GENERATORS, _STAGE_ID_OVERRIDES, _validate_registry_against_stages
+from bizstruct_ml.generators.registry import GENERATORS, _validate_registry_against_stages
 
 
 def test_registry_validates_cleanly_against_current_code():
@@ -12,10 +12,8 @@ def test_registry_validates_cleanly_against_current_code():
 def test_every_generator_resolves_to_a_known_stage():
     known_stage_ids = {s.id for s in STAGES}
     for block_id in GENERATORS:
-        stage_id = _STAGE_ID_OVERRIDES.get(block_id, block_id)
-        assert stage_id in known_stage_ids, (
-            f"generator '{block_id}' resolves to stage '{stage_id}', "
-            "which does not exist in bizstruct_domain.chain.STAGES"
+        assert block_id in known_stage_ids, (
+            f"generator '{block_id}' does not exist in bizstruct_domain.chain.STAGES"
         )
 
 

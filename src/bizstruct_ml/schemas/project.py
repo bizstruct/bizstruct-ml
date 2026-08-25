@@ -19,7 +19,7 @@ class ProjectState(BaseModel):
     def coerce_translation_key(cls, v: object) -> str:
         return str(v) if v else "en"
     models_options: dict[str, Any] | None = None
-    canvas_data: dict[str, Any] | None = None
+    canvas: dict[str, Any] | None = None
     empathy_map: dict[str, Any] | None = None
     hypotheses: dict[str, Any] | None = None
     pitch: dict[str, Any] | None = None

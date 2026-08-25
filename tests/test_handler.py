@@ -15,7 +15,7 @@ from bizstruct_ml.handler import handle_message
 from bizstruct_ml.schemas.project import ProjectState
 
 
-def _make_project(block_value=None, block_name="canvas_data") -> ProjectState:
+def _make_project(block_value=None, block_name="canvas") -> ProjectState:
     return ProjectState(
         id=uuid4(),
         title="Test Project",
@@ -52,15 +52,15 @@ def _make_pubsub():
 
 @pytest.mark.asyncio
 async def test_happy_path():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     pubsub = _make_pubsub()
 
     with patch(
         "bizstruct_ml.handler.GENERATORS",
-        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key_partners": []}))},
+        {"canvas": MagicMock(generate=AsyncMock(return_value={"key_partners": []}))},
     ):
         await handle_message(msg, sb_msg, backend, pubsub)
 
@@ -75,14 +75,14 @@ async def test_happy_path():
 
 @pytest.mark.asyncio
 async def test_idempotency_already_generated():
-    project = _make_project(block_name="canvas_data", block_value={"key_partners": []})
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value={"key_partners": []})
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     pubsub = _make_pubsub()
 
     generator_mock = MagicMock(generate=AsyncMock())
-    with patch("bizstruct_ml.handler.GENERATORS", {"canvas_data": generator_mock}):
+    with patch("bizstruct_ml.handler.GENERATORS", {"canvas": generator_mock}):
         await handle_message(msg, sb_msg, backend, pubsub)
 
     generator_mock.generate.assert_not_called()
@@ -112,7 +112,7 @@ async def test_force_bypasses_idempotency():
 @pytest.mark.asyncio
 async def test_project_not_found_dead_letters():
     project_id = str(uuid4())
-    msg = json.dumps({"project_id": project_id, "block": "canvas_data"})
+    msg = json.dumps({"project_id": project_id, "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(error=ProjectNotFoundError("not found"))
     pubsub = _make_pubsub()
@@ -127,7 +127,7 @@ async def test_project_not_found_dead_letters():
 @pytest.mark.asyncio
 async def test_backend_unavailable_abandons():
     project_id = str(uuid4())
-    msg = json.dumps({"project_id": project_id, "block": "canvas_data"})
+    msg = json.dumps({"project_id": project_id, "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(error=BackendUnavailableError("503"))
     pubsub = _make_pubsub()
@@ -141,15 +141,15 @@ async def test_backend_unavailable_abandons():
 
 @pytest.mark.asyncio
 async def test_generation_failed_sends_failed_hook():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     pubsub = _make_pubsub()
 
     with patch(
         "bizstruct_ml.handler.GENERATORS",
-        {"canvas_data": MagicMock(generate=AsyncMock(side_effect=Exception("LLM timeout")))},
+        {"canvas": MagicMock(generate=AsyncMock(side_effect=Exception("LLM timeout")))},
     ):
         await handle_message(msg, sb_msg, backend, pubsub)
 
@@ -162,8 +162,8 @@ async def test_generation_failed_sends_failed_hook():
 
 @pytest.mark.asyncio
 async def test_hook_failed_abandons():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     backend.send_hook = AsyncMock(side_effect=HookFailedError("hook down"))
@@ -171,7 +171,7 @@ async def test_hook_failed_abandons():
 
     with patch(
         "bizstruct_ml.handler.GENERATORS",
-        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+        {"canvas": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
     ):
         await handle_message(msg, sb_msg, backend, pubsub)
 
@@ -182,8 +182,8 @@ async def test_hook_failed_abandons():
 
 @pytest.mark.asyncio
 async def test_hook_422_dead_letters_without_abandon_or_regeneration():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     backend.send_hook = AsyncMock(
@@ -196,7 +196,7 @@ async def test_hook_422_dead_letters_without_abandon_or_regeneration():
     pubsub = _make_pubsub()
 
     generate_mock = AsyncMock(return_value={"key": "val"})
-    with patch("bizstruct_ml.handler.GENERATORS", {"canvas_data": MagicMock(generate=generate_mock)}):
+    with patch("bizstruct_ml.handler.GENERATORS", {"canvas": MagicMock(generate=generate_mock)}):
         await handle_message(msg, sb_msg, backend, pubsub)
 
     sb_msg.dead_letter_message.assert_awaited_once()
@@ -208,8 +208,8 @@ async def test_hook_422_dead_letters_without_abandon_or_regeneration():
 
 @pytest.mark.asyncio
 async def test_hook_500_abandons_not_dead_lettered():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     backend.send_hook = AsyncMock(side_effect=HookUnavailableError("Hook returned 500"))
@@ -217,7 +217,7 @@ async def test_hook_500_abandons_not_dead_lettered():
 
     with patch(
         "bizstruct_ml.handler.GENERATORS",
-        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+        {"canvas": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
     ):
         await handle_message(msg, sb_msg, backend, pubsub)
 
@@ -228,8 +228,8 @@ async def test_hook_500_abandons_not_dead_lettered():
 
 @pytest.mark.asyncio
 async def test_hook_timeout_abandons():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     backend.send_hook = AsyncMock(side_effect=HookUnavailableError("Timeout sending hook"))
@@ -237,7 +237,7 @@ async def test_hook_timeout_abandons():
 
     with patch(
         "bizstruct_ml.handler.GENERATORS",
-        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+        {"canvas": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
     ):
         await handle_message(msg, sb_msg, backend, pubsub)
 
@@ -247,8 +247,8 @@ async def test_hook_timeout_abandons():
 
 @pytest.mark.asyncio
 async def test_hook_404_dead_letters():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     backend.send_hook = AsyncMock(
@@ -258,7 +258,7 @@ async def test_hook_404_dead_letters():
 
     with patch(
         "bizstruct_ml.handler.GENERATORS",
-        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+        {"canvas": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
     ):
         await handle_message(msg, sb_msg, backend, pubsub)
 
@@ -268,8 +268,8 @@ async def test_hook_404_dead_letters():
 
 @pytest.mark.asyncio
 async def test_hook_rejected_dead_letter_reason_contains_status_code():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     backend.send_hook = AsyncMock(
@@ -279,7 +279,7 @@ async def test_hook_rejected_dead_letter_reason_contains_status_code():
 
     with patch(
         "bizstruct_ml.handler.GENERATORS",
-        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+        {"canvas": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
     ):
         await handle_message(msg, sb_msg, backend, pubsub)
 
@@ -314,8 +314,8 @@ async def test_unknown_block_dead_letters():
 
 @pytest.mark.asyncio
 async def test_pubsub_failure_does_not_prevent_complete():
-    project = _make_project(block_name="canvas_data", block_value=None)
-    msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+    project = _make_project(block_name="canvas", block_value=None)
+    msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
     sb_msg = _make_sb_message()
     backend = _make_backend(project=project)
     pubsub = _make_pubsub()
@@ -323,7 +323,7 @@ async def test_pubsub_failure_does_not_prevent_complete():
 
     with patch(
         "bizstruct_ml.handler.GENERATORS",
-        {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
+        {"canvas": MagicMock(generate=AsyncMock(return_value={"key": "val"}))},
     ):
         await handle_message(msg, sb_msg, backend, pubsub)
 
@@ -351,8 +351,8 @@ async def test_handle_message_completes_with_a_broken_langfuse_client():
     tracing._client_init_attempted = True
     tracing._client = _ExplodingClient()
     try:
-        project = _make_project(block_name="canvas_data", block_value=None)
-        msg = json.dumps({"project_id": str(project.id), "block": "canvas_data"})
+        project = _make_project(block_name="canvas", block_value=None)
+        msg = json.dumps({"project_id": str(project.id), "block": "canvas"})
         sb_msg = _make_sb_message()
         sb_msg.delivery_count = 1
         backend = _make_backend(project=project)
@@ -360,7 +360,7 @@ async def test_handle_message_completes_with_a_broken_langfuse_client():
 
         with patch(
             "bizstruct_ml.handler.GENERATORS",
-            {"canvas_data": MagicMock(generate=AsyncMock(return_value={"key_partners": []}))},
+            {"canvas": MagicMock(generate=AsyncMock(return_value={"key_partners": []}))},
         ):
             await handle_message(msg, sb_msg, backend, pubsub)
 
