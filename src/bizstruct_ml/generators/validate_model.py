@@ -1,23 +1,8 @@
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel
+from bizstruct_domain.validate_model import ValidateModelResult
 
 from bizstruct_ml.llm.client import LLMClient
-
-
-class _FieldFeedback(BaseModel):
-    field: Literal["title", "audience", "value_proposition", "description"]
-    status: Literal["ok", "weak", "invalid"]
-    comment: str
-    suggestion: str | None = None
-
-
-class _ValidationResult(BaseModel):
-    status: Literal["valid", "needs_revision", "invalid"]
-    score: int
-    summary: str
-    fields: list[_FieldFeedback]
-
 
 _SYSTEM = """\
 You are a senior business strategist and model validator. Evaluate the provided business model concept \
@@ -48,8 +33,8 @@ async def run_validate_model(payload: dict[str, Any]) -> dict[str, Any]:
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": user},
         ]
-        result = await llm.generate_structured(messages, _ValidationResult)
-        assert isinstance(result, _ValidationResult)
+        result = await llm.generate_structured(messages, ValidateModelResult)
+        assert isinstance(result, ValidateModelResult)
         return {
             "model_id": payload.get("model_id"),
             "status": result.status,

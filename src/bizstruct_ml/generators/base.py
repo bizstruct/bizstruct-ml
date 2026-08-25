@@ -9,7 +9,6 @@ from bizstruct_ml.llm.client import LLMClient, LLMError
 from bizstruct_ml.llm.prompts._shared import context_blocks_used
 from bizstruct_ml.observability import tracing
 from bizstruct_ml.schemas.project import ProjectState
-from bizstruct_ml.schemas.blocks.models_options import ModelsOptions
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from bizstruct_domain.blocks.architecture import Architecture
@@ -17,6 +16,7 @@ from bizstruct_domain.blocks.empathy_map import EmpathyMap
 from bizstruct_domain.blocks.scenario import Scenario
 from bizstruct_domain.blocks.pitch import Pitch
 from bizstruct_domain.blocks.hypotheses import Hypotheses
+from bizstruct_domain.blocks.models_options import ModelsOptions
 
 _VECTOR_COLOR = {"Financial": "indigo", "Technical": "teal", "Emotional": "slate"}
 _VECTOR_ICON = {"Financial": "coins", "Technical": "cpu", "Emotional": "heartHandshake"}
@@ -25,10 +25,10 @@ _MONETIZATION_ORDER = ["subscription", "transaction_fee", "retainer_plus_saas"]
 
 def _postprocess_models_options(data: ModelsOptions) -> dict:
     order = {m: i for i, m in enumerate(_MONETIZATION_ORDER)}
-    sorted_models = sorted(data.models, key=lambda m: order.get(m.monetization, 99))
+    sorted_options = sorted(data.options, key=lambda o: order.get(o.monetization.value, 99))
     result = data.model_copy(
         update={
-            "models": [m.model_copy(update={"id": uuid4()}) for m in sorted_models],
+            "options": [o.model_copy(update={"id": uuid4()}) for o in sorted_options],
             "selected_id": None,
         }
     )

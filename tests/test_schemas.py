@@ -13,39 +13,42 @@ from bizstruct_ml.schemas.blocks import (
 
 
 MODELS_OPTIONS_EXAMPLE = {
-    "models": [
+    "options": [
         {
             "id": "00000000-0000-0000-0000-000000000001",
-            "name": "B2B SaaS · EcoSync",
-            "tagline": "Automate ESG reporting in minutes",
+            "title": "B2B SaaS · EcoSync",
+            "audience": "mid-market",
+            "value_proposition": "Automate ESG reporting in minutes",
             "description": "Monthly subscription giving mid-market companies automated ESG reporting. Reduces compliance costs by 80%.",
             "monetization": "subscription",
-            "target_segment": "mid-market",
             "key_metric": "MRR / NRR",
             "time_to_value": "30 minutes to first report",
             "score": 91,
+            "score_rationale": "High: directly automates the Empathy Map's top pain (manual reporting) with a proven SaaS pricing model.",
         },
         {
             "id": "00000000-0000-0000-0000-000000000002",
-            "name": "Marketplace · EcoSync",
-            "tagline": "Pay per report generated",
+            "title": "Marketplace · EcoSync",
+            "audience": "SMB",
+            "value_proposition": "Pay per report generated",
             "description": "Transaction fee per ESG report submitted. Scales with customer usage.",
             "monetization": "transaction_fee",
-            "target_segment": "SMB",
             "key_metric": "GMV / take rate",
             "time_to_value": "15 minutes to first report",
             "score": 72,
+            "score_rationale": "Moderate: lowers the entry barrier for SMBs but revenue is less predictable than subscription.",
         },
         {
             "id": "00000000-0000-0000-0000-000000000003",
-            "name": "Advisory · EcoSync",
-            "tagline": "Expert advisory plus platform access",
+            "title": "Advisory · EcoSync",
+            "audience": "enterprise",
+            "value_proposition": "Expert advisory plus platform access",
             "description": "Retainer for ESG strategy consulting combined with SaaS access.",
             "monetization": "retainer_plus_saas",
-            "target_segment": "enterprise",
             "key_metric": "ACV",
             "time_to_value": "2 weeks onboarding",
             "score": 65,
+            "score_rationale": "Lower: higher-touch sales cycle and smaller addressable market than the other two options.",
         },
     ],
     "selected_id": None,
@@ -182,11 +185,11 @@ SCENARIO_EXAMPLE = {
         "pain_point_en": "Quarterly ESG report preparation takes 3 weeks and disrupts all plans",
     },
     "timeline": [
-        {"step_type": "context", "icon_key": "calendar", "text_uk": "Кінець кварталу — дедлайн ESG звіту через 3 тижні", "text_en": "End of quarter — ESG report deadline in 3 weeks"},
-        {"step_type": "goal", "icon_key": "target", "text_uk": "Зібрати дані від 12 відділів та підготувати звіт", "text_en": "Collect data from 12 departments and prepare the report"},
-        {"step_type": "action", "icon_key": "zap", "text_uk": "Олена підключає EcoSync до ERP та Excel-файлів", "text_en": "Elena connects EcoSync to ERP and Excel files"},
-        {"step_type": "result", "icon_key": "check-circle", "text_uk": "За 45 хвилин система зібрала та валідувала всі дані", "text_en": "In 45 minutes system collected and validated all data"},
-        {"step_type": "impact", "icon_key": "trending-up", "text_uk": "Звіт готовий на 2 тижні раніше, команда зберегла 70 годин", "text_en": "Report ready 2 weeks early, team saved 70 hours"},
+        {"step_type": "context", "text_uk": "Кінець кварталу — дедлайн ESG звіту через 3 тижні", "text_en": "End of quarter — ESG report deadline in 3 weeks"},
+        {"step_type": "goal", "text_uk": "Зібрати дані від 12 відділів та підготувати звіт", "text_en": "Collect data from 12 departments and prepare the report"},
+        {"step_type": "action", "text_uk": "Олена підключає EcoSync до ERP та Excel-файлів", "text_en": "Elena connects EcoSync to ERP and Excel files"},
+        {"step_type": "result", "text_uk": "За 45 хвилин система зібрала та валідувала всі дані", "text_en": "In 45 minutes system collected and validated all data"},
+        {"step_type": "impact", "text_uk": "Звіт готовий на 2 тижні раніше, команда зберегла 70 годин", "text_en": "Report ready 2 weeks early, team saved 70 hours"},
     ],
     "metrics": {
         "before": {"value_uk": "3 тижні", "value_en": "3 weeks", "label_uk": "Час на підготовку ESG звіту", "label_en": "Time to prepare ESG report"},
@@ -245,7 +248,7 @@ ARCHITECTURE_EXAMPLE = {
 
 def test_models_options_schema():
     result = ModelsOptions.model_validate(MODELS_OPTIONS_EXAMPLE)
-    assert len(result.models) == 3
+    assert len(result.options) == 3
     assert result.selected_id is None
 
 

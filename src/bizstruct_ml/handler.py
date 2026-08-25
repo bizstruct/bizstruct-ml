@@ -153,8 +153,11 @@ async def _process_block(
             await sb_message.abandon_message(sb_message)
             return
 
-    # Step 3: idempotency check
-    if project.get_block(block) is not None:
+    # Step 3: idempotency check — bypassed when the message is an explicit
+    # regeneration request (msg.force=True), e.g. models_options' "regenerate"
+    # action. Normal chain progression always has force=False, so this is
+    # unchanged for every other block.
+    if not msg.force and project.get_block(block) is not None:
         bound_log.info("already_generated")
         root_span.update(output={"outcome": "already_generated"})
         await sb_message.complete_message(sb_message)

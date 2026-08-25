@@ -1,7 +1,7 @@
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from bizstruct_ml.generators.registry import GENERATORS
 
@@ -12,12 +12,22 @@ KNOWN_BLOCKS = frozenset(GENERATORS.keys()) | {"validate_model"}
 
 
 class QueueMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     project_id: UUID
     block: str
     payload: dict[str, Any] | None = None
+    # False (default): normal chain progression — idempotency applies, a
+    # block that's already generated is treated as already_generated and
+    # skipped. True: an explicit regeneration request (e.g. models_options'
+    # "regenerate" action) — idempotency is bypassed even if the block
+    # already has data, since that's the whole point of asking for it again.
+    force: bool = False
 
 
 class HookPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     project_id: UUID
     block: str
     status: Literal["success", "failed"]
@@ -26,6 +36,8 @@ class HookPayload(BaseModel):
 
 
 class PubSubEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["block_generated"] = "block_generated"
     project_id: str
     block: str

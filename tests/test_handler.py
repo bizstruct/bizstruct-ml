@@ -91,6 +91,25 @@ async def test_idempotency_already_generated():
 
 
 @pytest.mark.asyncio
+async def test_force_bypasses_idempotency():
+    """force=True (an explicit regeneration request) generates again even
+    though the block already has data — unlike normal chain progression."""
+    project = _make_project(block_name="models_options", block_value={"options": []})
+    msg = json.dumps({"project_id": str(project.id), "block": "models_options", "force": True})
+    sb_msg = _make_sb_message()
+    backend = _make_backend(project=project)
+    pubsub = _make_pubsub()
+
+    generator_mock = MagicMock(generate=AsyncMock(return_value={"options": [], "selected_id": None}))
+    with patch("bizstruct_ml.handler.GENERATORS", {"models_options": generator_mock}):
+        await handle_message(msg, sb_msg, backend, pubsub)
+
+    generator_mock.generate.assert_awaited_once()
+    backend.send_hook.assert_awaited_once()
+    sb_msg.complete_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_project_not_found_dead_letters():
     project_id = str(uuid4())
     msg = json.dumps({"project_id": project_id, "block": "canvas_data"})

@@ -8,51 +8,49 @@ from bizstruct_ml.generators.base import (
     _postprocess_canvas_data,
     _postprocess_what_if,
 )
-from bizstruct_ml.schemas.blocks.models_options import ModelsOptions, BusinessModel
+from bizstruct_domain.blocks.models_options import ModelsOptions, BusinessModelOption
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData, CanvasItem
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from uuid import uuid4
 
 
-def _make_model(monetization: str, score: int = 80) -> BusinessModel:
-    return BusinessModel(
+def _make_option(monetization: str, score: int = 80) -> BusinessModelOption:
+    return BusinessModelOption(
         id=uuid4(),
-        name=f"Model {monetization}",
-        tagline="tagline",
-        description="desc",
+        title=f"Model {monetization}",
+        audience="mid-market sustainability teams",
+        value_proposition="A value proposition long enough to satisfy the domain model's minimum length.",
+        description="A description long enough to satisfy the domain model's minimum length.",
         monetization=monetization,  # type: ignore[arg-type]
-        target_segment="mid-market",
         key_metric="MRR",
         time_to_value="30 min",
         score=score,
+        score_rationale="A rationale long enough to satisfy the domain model's minimum length.",
     )
 
 
 def test_models_options_order_guaranteed():
     # Input is in wrong order: retainer_plus_saas, subscription, transaction_fee
     data = ModelsOptions(
-        models=[
-            _make_model("retainer_plus_saas"),
-            _make_model("subscription"),
-            _make_model("transaction_fee"),
+        options=[
+            _make_option("retainer_plus_saas"),
+            _make_option("subscription"),
+            _make_option("transaction_fee"),
         ],
         selected_id=None,
     )
     result = _postprocess_models_options(data)
-    order = [m["monetization"] for m in result["models"]]
+    order = [o["monetization"] for o in result["options"]]
     assert order == ["subscription", "transaction_fee", "retainer_plus_saas"]
 
 
 def test_models_options_selected_id_nulled():
-    existing_id = uuid4()
-    data = ModelsOptions(
-        models=[
-            _make_model("subscription"),
-            _make_model("transaction_fee"),
-            _make_model("retainer_plus_saas"),
-        ],
-        selected_id=existing_id,
-    )
+    options = [
+        _make_option("subscription"),
+        _make_option("transaction_fee"),
+        _make_option("retainer_plus_saas"),
+    ]
+    data = ModelsOptions(options=options, selected_id=options[0].id)
     result = _postprocess_models_options(data)
     assert result["selected_id"] is None
 
@@ -60,16 +58,16 @@ def test_models_options_selected_id_nulled():
 def test_models_options_uuids_regenerated():
     original_ids = [uuid4() for _ in range(3)]
     data = ModelsOptions(
-        models=[
-            _make_model("subscription"),
-            _make_model("transaction_fee"),
-            _make_model("retainer_plus_saas"),
+        options=[
+            _make_option("subscription"),
+            _make_option("transaction_fee"),
+            _make_option("retainer_plus_saas"),
         ],
     )
-    for m, oid in zip(data.models, original_ids):
-        object.__setattr__(m, "id", oid)
+    for o, oid in zip(data.options, original_ids):
+        object.__setattr__(o, "id", oid)
     result = _postprocess_models_options(data)
-    result_ids = [m["id"] for m in result["models"]]
+    result_ids = [o["id"] for o in result["options"]]
     assert all(rid not in [str(oid) for oid in original_ids] for rid in result_ids)
 
 
