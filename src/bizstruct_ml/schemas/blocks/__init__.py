@@ -1,4 +1,6 @@
-from .architecture import Architecture
+# `architecture` is sourced from bizstruct_domain — the local schema was
+# deleted in favor of the shared domain model (see bizstruct-domain repo).
+from bizstruct_domain.blocks.architecture import Architecture
 from .canvas_data import CanvasData
 from .empathy_map import EmpathyMap
 from .hypotheses import Hypotheses

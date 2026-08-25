@@ -8,7 +8,6 @@ from bizstruct_ml.generators.base import (
     _postprocess_canvas_data,
     _postprocess_hypotheses,
     _postprocess_what_if,
-    _postprocess_architecture,
     _postprocess_pitch,
     _postprocess_scenario,
 )
@@ -16,7 +15,6 @@ from bizstruct_ml.schemas.blocks.models_options import ModelsOptions, BusinessMo
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData, CanvasItem
 from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses, Hypothesis
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
-from bizstruct_ml.schemas.blocks.architecture import Architecture, ArchLocale, Epicenter, Pattern
 from bizstruct_ml.schemas.blocks.pitch import Pitch, PitchLocale, InvestorSlide, ClientSlide
 from bizstruct_ml.schemas.blocks.scenario import Scenario, ScenarioLocale, Persona, TimelineStep, ScenarioMetrics, MetricValue
 from uuid import uuid4
@@ -184,24 +182,9 @@ def test_what_if_status_applied_first():
     assert statuses == ["applied", "draft", "draft"]
 
 
-def test_architecture_statuses_enforced():
-    # The schema enforces Literal["determined"] / Literal["system_selection"],
-    # so postprocessing on a valid object must preserve — and always write — these statuses.
-    data = Architecture(
-        uk=ArchLocale(
-            epicenter=Epicenter(value="Finance-driven", description="desc"),
-            pattern=Pattern(value="FREE", subtype="Freemium", description="desc"),
-        ),
-        en=ArchLocale(
-            epicenter=Epicenter(value="Finance-driven", description="desc"),
-            pattern=Pattern(value="FREE", subtype="Freemium", description="desc"),
-        ),
-    )
-    fixed = _postprocess_architecture(data)
-    assert fixed["uk"]["epicenter"]["status"] == "determined"
-    assert fixed["uk"]["pattern"]["status"] == "system_selection"
-    assert fixed["en"]["epicenter"]["status"] == "determined"
-    assert fixed["en"]["pattern"]["status"] == "system_selection"
+# Architecture no longer has bespoke postprocessing — see
+# tests/test_architecture_generator.py for its generator-level coverage
+# (schema now comes from bizstruct_domain).
 
 
 def _make_pitch() -> Pitch:

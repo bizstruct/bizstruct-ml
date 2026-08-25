@@ -11,7 +11,7 @@ from bizstruct_ml.schemas.blocks.models_options import ModelsOptions
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData
 from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
-from bizstruct_ml.schemas.blocks.architecture import Architecture
+from bizstruct_domain.blocks.architecture import Architecture
 from bizstruct_ml.schemas.blocks.pitch import Pitch, INVESTOR_ORDER, CLIENT_ORDER
 from bizstruct_ml.schemas.blocks.scenario import Scenario
 
@@ -76,14 +76,6 @@ def _postprocess_what_if(data: WhatIf) -> dict:
             "status": "applied" if i == 0 else "draft",
         }))
     return WhatIf(scenarios=fixed).model_dump(mode="json")
-
-
-def _postprocess_architecture(data: Architecture) -> dict:
-    dump = data.model_dump(mode="json")
-    for locale in dump.values():
-        locale["epicenter"]["status"] = "determined"
-        locale["pattern"]["status"] = "system_selection"
-    return dump
 
 
 def _postprocess_pitch(data: Pitch) -> dict:
@@ -230,5 +222,6 @@ class ArchitectureGenerator(BaseGenerator):
         from bizstruct_ml.llm.prompts.architecture import build_messages
         return build_messages(project)
 
-    def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_architecture(data)  # type: ignore[arg-type]
+    # No postprocessing needed — bizstruct_domain.blocks.architecture.Architecture
+    # is a flat model with no derived/status fields to fix up; the default
+    # BaseGenerator.postprocess() (a plain model_dump) is sufficient.

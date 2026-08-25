@@ -3,17 +3,12 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-KNOWN_BLOCKS = frozenset({
-    "models_options",
-    "canvas_data",
-    "empathy_map",
-    "hypotheses",
-    "pitch",
-    "scenario",
-    "what_if",
-    "architecture",
-    "validate_model",
-})
+from bizstruct_ml.generators.registry import GENERATORS
+
+# Derived from the generator registry so this can't drift from what the
+# worker can actually generate. `validate_model` is a special non-generation
+# message handled separately in handler.py, not a block in the chain.
+KNOWN_BLOCKS = frozenset(GENERATORS.keys()) | {"validate_model"}
 
 
 class QueueMessage(BaseModel):

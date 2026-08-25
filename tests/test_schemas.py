@@ -234,32 +234,13 @@ WHAT_IF_EXAMPLE = {
 }
 
 ARCHITECTURE_EXAMPLE = {
-    "uk": {
-        "epicenter": {
-            "value": "Customer-driven",
-            "description": "Модель будується навколо болю клієнта — витрат часу на ESG звітність. Кожна функція вирішує конкретну проблему CFO.",
-            "status": "determined",
-        },
-        "pattern": {
-            "value": "FREE",
-            "subtype": "Freemium",
-            "description": "Безкоштовний план для знайомства з продуктом, платний — для повного автоматизованого звітування.",
-            "status": "system_selection",
-        },
-    },
-    "en": {
-        "epicenter": {
-            "value": "Customer-driven",
-            "description": "The model is built around the customer's pain — time spent on ESG reporting. Every feature solves a specific CFO problem.",
-            "status": "determined",
-        },
-        "pattern": {
-            "value": "FREE",
-            "subtype": "Freemium",
-            "description": "Free plan for product discovery, paid plan for full automated reporting.",
-            "status": "system_selection",
-        },
-    },
+    "epicenter": "customer_driven",
+    "epicenter_rationale_uk": "Модель будується навколо болю клієнта — витрат часу на ESG звітність. Кожна функція вирішує конкретну проблему CFO.",
+    "epicenter_rationale_en": "The model is built around the customer's pain — time spent on ESG reporting. Every feature solves a specific CFO problem.",
+    "pattern": "free",
+    "pattern_subtype": "freemium",
+    "pattern_rationale_uk": "Безкоштовний план для знайомства з продуктом, платний — для повного автоматизованого звітування без обмежень.",
+    "pattern_rationale_en": "Free plan for product discovery, paid plan for full automated reporting without limits.",
 }
 
 
@@ -310,5 +291,6 @@ def test_what_if_schema():
 
 def test_architecture_schema():
     result = Architecture.model_validate(ARCHITECTURE_EXAMPLE)
-    assert result.uk.epicenter.status == "determined"
-    assert result.en.pattern.status == "system_selection"
+    assert result.epicenter.value == "customer_driven"
+    assert result.pattern.value == "free"
+    assert result.pattern_subtype.value == "freemium"
