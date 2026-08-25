@@ -137,39 +137,39 @@ HYPOTHESES_EXAMPLE = {
     ]
 }
 
+def _pitch_slide(slide_type: str, headline_uk: str, headline_en: str, content_uk: str, content_en: str) -> dict:
+    return {
+        "type": slide_type,
+        "headline_uk": headline_uk, "headline_en": headline_en,
+        "content_uk": content_uk, "content_en": content_en,
+    }
+
+
 PITCH_EXAMPLE = {
-    "uk": {
-        "investor": [
-            {"type": "hook", "headline": "ESG-звітність коштує €240k/рік та 3 тижні часу", "content": "Кожна публічна компанія зобов'язана звітувати. Жодна не хоче витрачати на це час."},
-            {"type": "problem", "headline": "Компанії тонуть у Excel і консультантах", "content": "80 годин на квартал, 15% помилок у звітах, €50k+ на зовнішніх консультантів."},
-            {"type": "solution", "headline": "EcoSync: автоматизація ESG за 30 хвилин", "content": "AI збирає, аналізує і генерує звіти автоматично. Підтримка GRI, TCFD, CSRD."},
-            {"type": "traction", "headline": "Потенційно 500+ компаній у pipeline", "content": "Приклад: перші 10 клієнтів можуть заощадити €1.2M сукупно."},
-            {"type": "ask", "headline": "Залучаємо €2M seed раунд", "content": "На розвиток продукту та залучення перших 50 enterprise клієнтів."},
-        ],
-        "client": [
-            {"type": "opening", "headline": "Ваш ESG-звіт готовий. За 30 хвилин.", "content": "Не за 3 тижні, не за €50k. За 30 хвилин."},
-            {"type": "empathy", "headline": "Ми знаємо: збір даних — це пекло", "content": "80 годин на квартал, неузгодженість між відділами, страх помилок."},
-            {"type": "transformation", "headline": "З EcoSync звітність стає рутиною, не кризою", "content": "Автоматичний збір, валідація, генерація звіту в один клік."},
-            {"type": "social_proof", "headline": "Приклад: CFO заощадив 70 годин за квартал", "content": "Потенційна економія €40k/рік для компаній розміром 500+ людей."},
-            {"type": "invitation", "headline": "Спробуйте безкоштовно 30 днів", "content": "Підключіть ваші дані — перший звіт готовий сьогодні."},
-        ],
-    },
-    "en": {
-        "investor": [
-            {"type": "hook", "headline": "ESG reporting costs €240k/year and 3 weeks", "content": "Every public company must report. None want to waste time on it."},
-            {"type": "problem", "headline": "Companies drown in Excel and consultants", "content": "80 hours per quarter, 15% error rate, €50k+ on external consultants."},
-            {"type": "solution", "headline": "EcoSync: ESG automation in 30 minutes", "content": "AI collects, analyzes, and generates reports automatically. Supports GRI, TCFD, CSRD."},
-            {"type": "traction", "headline": "Potentially 500+ companies in pipeline", "content": "Example: first 10 clients could save €1.2M collectively."},
-            {"type": "ask", "headline": "Raising €2M seed round", "content": "For product development and acquiring first 50 enterprise clients."},
-        ],
-        "client": [
-            {"type": "opening", "headline": "Your ESG report is ready. In 30 minutes.", "content": "Not 3 weeks, not €50k. In 30 minutes."},
-            {"type": "empathy", "headline": "We know: data collection is hell", "content": "80 hours per quarter, cross-department misalignment, fear of errors."},
-            {"type": "transformation", "headline": "With EcoSync reporting becomes routine, not crisis", "content": "Automatic collection, validation, report generation in one click."},
-            {"type": "social_proof", "headline": "Example: CFO saved 70 hours per quarter", "content": "Potential savings of €40k/year for companies with 500+ employees."},
-            {"type": "invitation", "headline": "Try free for 30 days", "content": "Connect your data — first report ready today."},
-        ],
-    },
+    "investor": [
+        _pitch_slide("hook", "ESG-звітність коштує €240k/рік та 3 тижні часу", "ESG reporting costs €240k/year and 3 weeks",
+                     "Кожна публічна компанія зобов'язана звітувати. Жодна не хоче витрачати на це час.", "Every public company must report. None want to waste time on it."),
+        _pitch_slide("problem", "Компанії тонуть у Excel і консультантах", "Companies drown in Excel and consultants",
+                     "80 годин на квартал, 15% помилок у звітах, €50k+ на зовнішніх консультантів.", "80 hours per quarter, 15% error rate, €50k+ on external consultants."),
+        _pitch_slide("solution", "EcoSync: автоматизація ESG за 30 хвилин", "EcoSync: ESG automation in 30 minutes",
+                     "AI збирає, аналізує і генерує звіти автоматично. Підтримка GRI, TCFD, CSRD.", "AI collects, analyzes, and generates reports automatically. Supports GRI, TCFD, CSRD."),
+        _pitch_slide("traction", "Потенційно 500+ компаній у pipeline", "Potentially 500+ companies in pipeline",
+                     "Приклад: перші 10 клієнтів можуть заощадити €1.2M сукупно.", "Example: first 10 clients could save €1.2M collectively."),
+        _pitch_slide("ask", "Залучаємо €2M seed раунд", "Raising €2M seed round",
+                     "На розвиток продукту та залучення перших 50 enterprise клієнтів.", "For product development and acquiring first 50 enterprise clients."),
+    ],
+    "customer": [
+        _pitch_slide("opening", "Ваш ESG-звіт готовий. За 30 хвилин.", "Your ESG report is ready. In 30 minutes.",
+                     "Не за 3 тижні, не за €50k. За 30 хвилин.", "Not 3 weeks, not €50k. In 30 minutes."),
+        _pitch_slide("empathy", "Ми знаємо: збір даних — це пекло", "We know: data collection is hell",
+                     "80 годин на квартал, неузгодженість між відділами, страх помилок.", "80 hours per quarter, cross-department misalignment, fear of errors."),
+        _pitch_slide("transformation", "З EcoSync звітність стає рутиною, не кризою", "With EcoSync reporting becomes routine, not crisis",
+                     "Автоматичний збір, валідація, генерація звіту в один клік.", "Automatic collection, validation, report generation in one click."),
+        _pitch_slide("social_proof", "Приклад: CFO заощадив 70 годин за квартал", "Example: CFO saved 70 hours per quarter",
+                     "Потенційна економія €40k/рік для компаній розміром 500+ людей.", "Potential savings of €40k/year for companies with 500+ employees."),
+        _pitch_slide("invitation", "Спробуйте безкоштовно 30 днів", "Try free for 30 days",
+                     "Підключіть ваші дані — перший звіт готовий сьогодні.", "Connect your data — first report ready today."),
+    ],
 }
 
 SCENARIO_EXAMPLE = {
@@ -271,9 +271,10 @@ def test_hypotheses_schema():
 
 def test_pitch_schema():
     result = Pitch.model_validate(PITCH_EXAMPLE)
-    assert len(result.uk.investor) == 5
-    assert len(result.en.client) == 5
-    assert result.uk.investor[0].type == "hook"
+    assert len(result.investor) == 5
+    assert len(result.customer) == 5
+    assert result.investor[0].type == "hook"
+    assert result.customer[0].type == "opening"
 
 
 def test_scenario_schema():

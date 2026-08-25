@@ -8,13 +8,11 @@ from bizstruct_ml.generators.base import (
     _postprocess_canvas_data,
     _postprocess_hypotheses,
     _postprocess_what_if,
-    _postprocess_pitch,
 )
 from bizstruct_ml.schemas.blocks.models_options import ModelsOptions, BusinessModel
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData, CanvasItem
 from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses, Hypothesis
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
-from bizstruct_ml.schemas.blocks.pitch import Pitch, PitchLocale, InvestorSlide, ClientSlide
 from uuid import uuid4
 
 
@@ -185,27 +183,10 @@ def test_what_if_status_applied_first():
 # (schema now comes from bizstruct_domain).
 
 
-def _make_pitch() -> Pitch:
-    def inv(t: str) -> InvestorSlide:
-        return InvestorSlide(type=t, headline="headline", content="content")  # type: ignore[arg-type]
-
-    def cli(t: str) -> ClientSlide:
-        return ClientSlide(type=t, headline="headline", content="content")  # type: ignore[arg-type]
-
-    locale = PitchLocale(
-        investor=[inv("ask"), inv("traction"), inv("solution"), inv("problem"), inv("hook")],
-        client=[cli("invitation"), cli("social_proof"), cli("transformation"), cli("empathy"), cli("opening")],
-    )
-    return Pitch(uk=locale, en=locale)
-
-
-def test_pitch_order_fixed():
-    data = _make_pitch()
-    result = _postprocess_pitch(data)
-    investor_types = [s["type"] for s in result["uk"]["investor"]]
-    client_types = [s["type"] for s in result["uk"]["client"]]
-    assert investor_types == ["hook", "problem", "solution", "traction", "ask"]
-    assert client_types == ["opening", "empathy", "transformation", "social_proof", "invitation"]
+# Pitch has no postprocessing of its own anymore — it's sourced from
+# bizstruct_domain, which enforces slide order itself via a cross-field
+# validator (see bizstruct-domain's test_pitch.py), and the audience field
+# is `customer` there, not `client`.
 
 
 # Scenario has no postprocessing of its own anymore — it's sourced from

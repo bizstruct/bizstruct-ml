@@ -6,7 +6,7 @@ def build_messages(project: ProjectState) -> list[dict]:
     user = f"""Project: {project.title}
 Idea: {project.idea}{context_section(project)}
 
-Generate two pitch decks: investor and client. This is the LAST block
+Generate two pitch decks: investor and customer. This is the LAST block
 generated — everything above (Empathy Map, Business Model Options, Canvas,
 Architecture, What-If, Hypotheses, Scenario) already exists. Use it; do not
 restate the idea in the abstract when a specific prior block already says
@@ -25,7 +25,7 @@ Investor deck (exactly 5 slides in this order):
    funds around the riskiest Viability/Feasibility hypotheses above (what
    this money is meant to de-risk)
 
-Client deck (exactly 5 slides in this order):
+Customer deck (exactly 5 slides in this order):
 1. opening — empathetic opening; mirror the Scenario persona's situation
 2. empathy — understanding their situation; use the Empathy Map's
    `says`/`feels` items, in their voice where possible
@@ -37,7 +37,9 @@ Client deck (exactly 5 slides in this order):
 Rules:
 - headline: max 80 characters, impact-driven
 - content: 1-2 sentences, specific numbers where possible
-- Generate BOTH Ukrainian (uk) and English (en) versions"""
+- Every text field is bilingual: provide both a Ukrainian (_uk) and an
+  English (_en) version of the same content — translate, don't write
+  unrelated content per language"""
     return [
         {"role": "system", "content": bilingual_system()},
         {"role": "user", "content": user},
