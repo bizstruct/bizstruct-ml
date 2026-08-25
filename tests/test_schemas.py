@@ -129,11 +129,11 @@ EMPATHY_MAP_EXAMPLE = {
 
 HYPOTHESES_EXAMPLE = {
     "hypotheses": [
-        {"id": "H1.1", "text": "60% of CFOs spend >40h/quarter on ESG reporting", "category": "Desirability", "quadrant": "q1"},
-        {"id": "H1.2", "text": "80% would switch to automated solution", "category": "Desirability", "quadrant": "q1"},
-        {"id": "H2.1", "text": "Mid-market firms pay €2000/month for ESG tools", "category": "Viability", "quadrant": "q2"},
-        {"id": "H3.1", "text": "AI can achieve 95% accuracy on standard ESG frameworks", "category": "Feasibility", "quadrant": "q3"},
-        {"id": "H3.2", "text": "Integration with ERP systems takes <2 weeks", "category": "Feasibility", "quadrant": "q3"},
+        {"id": "H1.1", "text": "60% of CFOs spend >40h/quarter on ESG reporting", "category": "desirability", "quadrant": "q1"},
+        {"id": "H1.2", "text": "80% would switch to an automated solution", "category": "desirability", "quadrant": "q1"},
+        {"id": "H2.1", "text": "Mid-market firms pay €2000/month for ESG tools", "category": "viability", "quadrant": "q2"},
+        {"id": "H3.1", "text": "AI can achieve 95% accuracy on standard ESG frameworks", "category": "feasibility", "quadrant": "q3"},
+        {"id": "H3.2", "text": "Integration with ERP systems takes <2 weeks", "category": "feasibility", "quadrant": "q3"},
     ]
 }
 
@@ -266,7 +266,7 @@ def test_hypotheses_schema():
     result = Hypotheses.model_validate(HYPOTHESES_EXAMPLE)
     assert len(result.hypotheses) == 5
     categories = {h.category for h in result.hypotheses}
-    assert categories == {"Desirability", "Viability", "Feasibility"}
+    assert categories == {"desirability", "viability", "feasibility"}
 
 
 def test_pitch_schema():

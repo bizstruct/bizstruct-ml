@@ -11,12 +11,12 @@ from bizstruct_ml.observability import tracing
 from bizstruct_ml.schemas.project import ProjectState
 from bizstruct_ml.schemas.blocks.models_options import ModelsOptions
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData
-from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from bizstruct_domain.blocks.architecture import Architecture
 from bizstruct_domain.blocks.empathy_map import EmpathyMap
 from bizstruct_domain.blocks.scenario import Scenario
 from bizstruct_domain.blocks.pitch import Pitch
+from bizstruct_domain.blocks.hypotheses import Hypotheses
 
 _VECTOR_COLOR = {"Financial": "indigo", "Technical": "teal", "Emotional": "slate"}
 _VECTOR_ICON = {"Financial": "coins", "Technical": "cpu", "Emotional": "heartHandshake"}
@@ -43,25 +43,6 @@ def _postprocess_canvas_data(data: CanvasData) -> dict:
                 item["id"] = str(uuid4())
                 item["is_ai_generated"] = True
     return dump
-
-
-def _postprocess_hypotheses(data: Hypotheses) -> dict:
-    categories = {h.category for h in data.hypotheses}
-    required = {"Desirability", "Viability", "Feasibility"}
-    missing = required - categories
-    if missing:
-        raise ValidationError.from_exception_data(
-            title="Hypotheses",
-            input_type="python",
-            line_errors=[{
-                "type": "value_error",
-                "loc": ("hypotheses",),
-                "msg": f"Missing hypotheses for categories: {missing}",
-                "input": data.hypotheses,
-                "ctx": {"error": ValueError(f"Missing categories: {missing}")},
-            }],
-        )
-    return data.model_dump(mode="json")
 
 
 def _postprocess_what_if(data: WhatIf) -> dict:
@@ -187,8 +168,8 @@ class HypothesesGenerator(BaseGenerator):
         from bizstruct_ml.llm.prompts.hypotheses import build_messages
         return build_messages(project)
 
-    def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_hypotheses(data)  # type: ignore[arg-type]
+    # No postprocessing needed — bizstruct_domain.blocks.hypotheses.Hypotheses
+    # enforces D/V/F category coverage itself via a cross-field validator.
 
 
 class PitchGenerator(BaseGenerator):

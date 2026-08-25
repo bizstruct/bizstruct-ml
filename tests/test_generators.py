@@ -6,12 +6,10 @@ from pydantic import ValidationError
 from bizstruct_ml.generators.base import (
     _postprocess_models_options,
     _postprocess_canvas_data,
-    _postprocess_hypotheses,
     _postprocess_what_if,
 )
 from bizstruct_ml.schemas.blocks.models_options import ModelsOptions, BusinessModel
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData, CanvasItem
-from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses, Hypothesis
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from uuid import uuid4
 
@@ -100,29 +98,9 @@ def test_canvas_data_uuids_regenerated():
             assert it["is_ai_generated"] is True
 
 
-def test_hypotheses_missing_category_raises():
-    # Schema validator catches missing category at construction time.
-    with pytest.raises(ValidationError):
-        Hypotheses(hypotheses=[
-            Hypothesis(id="H1.1", text="test 50%", category="Desirability", quadrant="q1"),
-            Hypothesis(id="H1.2", text="test 60%", category="Desirability", quadrant="q1"),
-            Hypothesis(id="H1.3", text="test 70%", category="Desirability", quadrant="q1"),
-            Hypothesis(id="H2.1", text="test €100", category="Viability", quadrant="q2"),
-            Hypothesis(id="H2.2", text="test €200", category="Viability", quadrant="q2"),
-            # Missing Feasibility
-        ])
-
-
-def test_hypotheses_all_categories_passes():
-    data = Hypotheses(hypotheses=[
-        Hypothesis(id="H1.1", text="test 50%", category="Desirability", quadrant="q1"),
-        Hypothesis(id="H2.1", text="test €100", category="Viability", quadrant="q2"),
-        Hypothesis(id="H3.1", text="test 2 weeks", category="Feasibility", quadrant="q3"),
-        Hypothesis(id="H3.2", text="test 95%", category="Feasibility", quadrant="q3"),
-        Hypothesis(id="H1.2", text="test 80%", category="Desirability", quadrant="q1"),
-    ])
-    result = _postprocess_hypotheses(data)
-    assert len(result["hypotheses"]) == 5
+# Hypotheses has no postprocessing of its own anymore — it's sourced from
+# bizstruct_domain, which enforces D/V/F category coverage itself via a
+# cross-field validator (see bizstruct-domain's test_hypotheses.py).
 
 
 def _make_what_if_scenario(vector: str, color: str, icon: str, status: str) -> WhatIfScenario:
