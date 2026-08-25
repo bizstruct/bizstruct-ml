@@ -15,8 +15,8 @@ from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from bizstruct_domain.blocks.architecture import Architecture
 from bizstruct_domain.blocks.empathy_map import EmpathyMap
+from bizstruct_domain.blocks.scenario import Scenario
 from bizstruct_ml.schemas.blocks.pitch import Pitch, INVESTOR_ORDER, CLIENT_ORDER
-from bizstruct_ml.schemas.blocks.scenario import Scenario
 
 _VECTOR_COLOR = {"Financial": "indigo", "Technical": "teal", "Emotional": "slate"}
 _VECTOR_ICON = {"Financial": "coins", "Technical": "cpu", "Emotional": "heartHandshake"}
@@ -88,15 +88,6 @@ def _postprocess_pitch(data: Pitch) -> dict:
         inv.sort(key=lambda s: INVESTOR_ORDER.index(s["type"]) if s["type"] in INVESTOR_ORDER else 99)
         cli = locale["client"]
         cli.sort(key=lambda s: CLIENT_ORDER.index(s["type"]) if s["type"] in CLIENT_ORDER else 99)
-    return dump
-
-
-def _postprocess_scenario(data: Scenario) -> dict:
-    ACTION_RESULT = {"scenario.step.action", "scenario.step.result"}
-    dump = data.model_dump(mode="json")
-    for locale in dump.values():
-        for step in locale["timeline"]:
-            step["highlight"] = step["label_key"] in ACTION_RESULT
     return dump
 
 
@@ -230,8 +221,10 @@ class ScenarioGenerator(BaseGenerator):
         from bizstruct_ml.llm.prompts.scenario import build_messages
         return build_messages(project)
 
-    def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_scenario(data)  # type: ignore[arg-type]
+    # No postprocessing needed — bizstruct_domain.blocks.scenario.Scenario
+    # has no derived/status fields to fix up. In particular, step highlighting
+    # is no longer computed here: it's presentation logic, moved to the
+    # frontend (derived from step_type).
 
 
 class WhatIfGenerator(BaseGenerator):

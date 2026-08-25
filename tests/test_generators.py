@@ -9,14 +9,12 @@ from bizstruct_ml.generators.base import (
     _postprocess_hypotheses,
     _postprocess_what_if,
     _postprocess_pitch,
-    _postprocess_scenario,
 )
 from bizstruct_ml.schemas.blocks.models_options import ModelsOptions, BusinessModel
 from bizstruct_ml.schemas.blocks.canvas_data import CanvasData, CanvasItem
 from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses, Hypothesis
 from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from bizstruct_ml.schemas.blocks.pitch import Pitch, PitchLocale, InvestorSlide, ClientSlide
-from bizstruct_ml.schemas.blocks.scenario import Scenario, ScenarioLocale, Persona, TimelineStep, ScenarioMetrics, MetricValue
 from uuid import uuid4
 
 
@@ -210,33 +208,7 @@ def test_pitch_order_fixed():
     assert client_types == ["opening", "empathy", "transformation", "social_proof", "invitation"]
 
 
-def _make_scenario() -> Scenario:
-    def step(icon: str, label: str, highlight: bool) -> TimelineStep:
-        return TimelineStep(icon_key=icon, label_key=label, text="text", highlight=highlight)  # type: ignore[arg-type]
-
-    locale = ScenarioLocale(
-        persona=Persona(name="Test User", initials="TU", role="CFO", pain_point="pain"),
-        timeline=[
-            step("calendar", "scenario.step.context", False),
-            step("target", "scenario.step.goal", False),
-            step("zap", "scenario.step.action", False),       # wrong highlight
-            step("check-circle", "scenario.step.result", False),  # wrong highlight
-            step("trending-up", "scenario.step.impact", True),    # wrong highlight
-        ],
-        metrics=ScenarioMetrics(
-            before=MetricValue(value="3 weeks", label="before"),
-            after=MetricValue(value="30 min", label="after"),
-        ),
-    )
-    return Scenario(uk=locale, en=locale)
-
-
-def test_scenario_highlight_enforced():
-    data = _make_scenario()
-    result = _postprocess_scenario(data)
-    highlights = [(s["label_key"], s["highlight"]) for s in result["uk"]["timeline"]]
-    assert ("scenario.step.action", True) in highlights
-    assert ("scenario.step.result", True) in highlights
-    assert ("scenario.step.context", False) in highlights
-    assert ("scenario.step.goal", False) in highlights
-    assert ("scenario.step.impact", False) in highlights
+# Scenario has no postprocessing of its own anymore — it's sourced from
+# bizstruct_domain, which enforces step order/icon pairing itself (see
+# bizstruct-domain's test_scenario.py) and no longer carries `highlight`
+# (that's presentation logic, moved to the frontend).

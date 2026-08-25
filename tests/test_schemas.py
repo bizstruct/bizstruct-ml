@@ -173,43 +173,24 @@ PITCH_EXAMPLE = {
 }
 
 SCENARIO_EXAMPLE = {
-    "uk": {
-        "persona": {
-            "name": "Олена Коваль",
-            "initials": "ОК",
-            "role": "CFO, виробнича компанія",
-            "pain_point": "Щоквартальна підготовка ESG-звіту займає 3 тижні і ламає всі плани",
-        },
-        "timeline": [
-            {"icon_key": "calendar", "label_key": "scenario.step.context", "text": "Кінець кварталу — дедлайн ESG звіту через 3 тижні", "highlight": False},
-            {"icon_key": "target", "label_key": "scenario.step.goal", "text": "Зібрати дані від 12 відділів та підготувати звіт", "highlight": False},
-            {"icon_key": "zap", "label_key": "scenario.step.action", "text": "Олена підключає EcoSync до ERP та Excel-файлів", "highlight": True},
-            {"icon_key": "check-circle", "label_key": "scenario.step.result", "text": "За 45 хвилин система зібрала та валідувала всі дані", "highlight": True},
-            {"icon_key": "trending-up", "label_key": "scenario.step.impact", "text": "Звіт готовий на 2 тижні раніше, команда зберегла 70 годин", "highlight": False},
-        ],
-        "metrics": {
-            "before": {"value": "3 тижні", "label": "Час на підготовку ESG звіту"},
-            "after": {"value": "45 хвилин", "label": "Час з EcoSync"},
-        },
+    "persona": {
+        "name_uk": "Олена Коваль",
+        "name_en": "Elena Koval",
+        "role_uk": "CFO, виробнича компанія",
+        "role_en": "CFO, manufacturing company",
+        "pain_point_uk": "Щоквартальна підготовка ESG-звіту займає 3 тижні і ламає всі плани",
+        "pain_point_en": "Quarterly ESG report preparation takes 3 weeks and disrupts all plans",
     },
-    "en": {
-        "persona": {
-            "name": "Elena Koval",
-            "initials": "EK",
-            "role": "CFO, manufacturing company",
-            "pain_point": "Quarterly ESG report preparation takes 3 weeks and disrupts all plans",
-        },
-        "timeline": [
-            {"icon_key": "calendar", "label_key": "scenario.step.context", "text": "End of quarter — ESG report deadline in 3 weeks", "highlight": False},
-            {"icon_key": "target", "label_key": "scenario.step.goal", "text": "Collect data from 12 departments and prepare the report", "highlight": False},
-            {"icon_key": "zap", "label_key": "scenario.step.action", "text": "Elena connects EcoSync to ERP and Excel files", "highlight": True},
-            {"icon_key": "check-circle", "label_key": "scenario.step.result", "text": "In 45 minutes system collected and validated all data", "highlight": True},
-            {"icon_key": "trending-up", "label_key": "scenario.step.impact", "text": "Report ready 2 weeks early, team saved 70 hours", "highlight": False},
-        ],
-        "metrics": {
-            "before": {"value": "3 weeks", "label": "Time to prepare ESG report"},
-            "after": {"value": "45 minutes", "label": "Time with EcoSync"},
-        },
+    "timeline": [
+        {"step_type": "context", "icon_key": "calendar", "text_uk": "Кінець кварталу — дедлайн ESG звіту через 3 тижні", "text_en": "End of quarter — ESG report deadline in 3 weeks"},
+        {"step_type": "goal", "icon_key": "target", "text_uk": "Зібрати дані від 12 відділів та підготувати звіт", "text_en": "Collect data from 12 departments and prepare the report"},
+        {"step_type": "action", "icon_key": "zap", "text_uk": "Олена підключає EcoSync до ERP та Excel-файлів", "text_en": "Elena connects EcoSync to ERP and Excel files"},
+        {"step_type": "result", "icon_key": "check-circle", "text_uk": "За 45 хвилин система зібрала та валідувала всі дані", "text_en": "In 45 minutes system collected and validated all data"},
+        {"step_type": "impact", "icon_key": "trending-up", "text_uk": "Звіт готовий на 2 тижні раніше, команда зберегла 70 годин", "text_en": "Report ready 2 weeks early, team saved 70 hours"},
+    ],
+    "metrics": {
+        "before": {"value_uk": "3 тижні", "value_en": "3 weeks", "label_uk": "Час на підготовку ESG звіту", "label_en": "Time to prepare ESG report"},
+        "after": {"value_uk": "45 хвилин", "value_en": "45 minutes", "label_uk": "Час з EcoSync", "label_en": "Time with EcoSync"},
     },
 }
 
@@ -297,8 +278,9 @@ def test_pitch_schema():
 
 def test_scenario_schema():
     result = Scenario.model_validate(SCENARIO_EXAMPLE)
-    assert result.uk.persona.name == "Олена Коваль"
-    assert len(result.uk.timeline) == 5
+    assert result.persona.name_uk == "Олена Коваль"
+    assert len(result.timeline) == 5
+    assert result.timeline[0].step_type == "context"
 
 
 def test_what_if_schema():
