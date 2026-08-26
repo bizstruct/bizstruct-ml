@@ -10,7 +10,8 @@ from bizstruct_ml.generators.base import (
 )
 from bizstruct_domain.blocks.models_options import ModelsOptions, BusinessModelOption
 from bizstruct_domain.blocks.canvas import CanvasGenerated, CanvasCard
-from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
+from bizstruct_domain.blocks.what_if import ERRCMove, WhatIfAlternative, WhatIfGenerated
+from bizstruct_domain.enums import CanvasSection, ERRCAction
 from uuid import uuid4
 
 
@@ -101,57 +102,55 @@ def test_canvas_uuids_regenerated():
 # cross-field validator (see bizstruct-domain's test_hypotheses.py).
 
 
-def _make_what_if_scenario(vector: str, color: str, icon: str, status: str) -> WhatIfScenario:
-    return WhatIfScenario(
+def _make_move(action: ERRCAction) -> ERRCMove:
+    kwargs = dict(
+        action=action,
+        target_section=CanvasSection.KEY_PARTNERS,
+        target="Third-party logistics partner",
+        rationale_uk="Скорочує залежність від зовнішнього партнера.",
+        rationale_en="Reduces dependency on an external partner.",
+    )
+    if action in (ERRCAction.REDUCE, ERRCAction.RAISE_):
+        kwargs["new_text"] = "Regional logistics partner, smaller contract"
+    return ERRCMove(**kwargs)
+
+
+def _make_alternative() -> WhatIfAlternative:
+    return WhatIfAlternative(
         id=uuid4(),
-        vector=vector,  # type: ignore[arg-type]
-        color=color,  # type: ignore[arg-type]
-        icon=icon,  # type: ignore[arg-type]
-        title="What if title",
-        description="description",
-        value="value",
-        revenue="€1M",
-        status=status,  # type: ignore[arg-type]
+        title_uk="Пряма доставка",
+        title_en="Direct delivery",
+        premise_uk="Прибрати посередників у логістиці.",
+        premise_en="Remove logistics intermediaries.",
+        moves=[
+            _make_move(ERRCAction.ELIMINATE),
+            _make_move(ERRCAction.REDUCE),
+            _make_move(ERRCAction.RAISE_),
+        ],
+        expected_impact_uk="Нижча собівартість доставки.",
+        expected_impact_en="Lower delivery cost.",
     )
 
 
-def test_what_if_order_guaranteed():
-    # Input in wrong order: Emotional, Financial, Technical
-    data = WhatIf(scenarios=[
-        _make_what_if_scenario("Emotional", "slate", "heartHandshake", "draft"),
-        _make_what_if_scenario("Financial", "indigo", "coins", "draft"),
-        _make_what_if_scenario("Technical", "teal", "cpu", "draft"),
-    ])
+def test_what_if_uuids_regenerated():
+    original_ids = [uuid4() for _ in range(3)]
+    alts = [_make_alternative() for _ in range(3)]
+    for alt, oid in zip(alts, original_ids):
+        object.__setattr__(alt, "id", oid)
+    data = WhatIfGenerated(alternatives=alts)
     result = _postprocess_what_if(data)
-    vectors = [s["vector"] for s in result["scenarios"]]
-    assert vectors == ["Financial", "Technical", "Emotional"]
+    result_ids = [a["id"] for a in result["alternatives"]]
+    assert all(rid not in [str(oid) for oid in original_ids] for rid in result_ids)
 
 
-def test_what_if_color_icon_deterministic():
-    data = WhatIf(scenarios=[
-        _make_what_if_scenario("Financial", "slate", "cpu", "draft"),   # wrong color/icon
-        _make_what_if_scenario("Technical", "indigo", "heartHandshake", "draft"),
-        _make_what_if_scenario("Emotional", "teal", "coins", "draft"),
-    ])
+def test_what_if_status_left_draft():
+    """Postprocessing must not assign `applied` — that's a user decision,
+    not a generation-time default (bizstruct-domain what_if module
+    docstring, B1)."""
+    data = WhatIfGenerated(alternatives=[_make_alternative() for _ in range(3)])
     result = _postprocess_what_if(data)
-    scenarios = {s["vector"]: s for s in result["scenarios"]}
-    assert scenarios["Financial"]["color"] == "indigo"
-    assert scenarios["Financial"]["icon"] == "coins"
-    assert scenarios["Technical"]["color"] == "teal"
-    assert scenarios["Technical"]["icon"] == "cpu"
-    assert scenarios["Emotional"]["color"] == "slate"
-    assert scenarios["Emotional"]["icon"] == "heartHandshake"
-
-
-def test_what_if_status_applied_first():
-    data = WhatIf(scenarios=[
-        _make_what_if_scenario("Financial", "indigo", "coins", "draft"),
-        _make_what_if_scenario("Technical", "teal", "cpu", "draft"),
-        _make_what_if_scenario("Emotional", "slate", "heartHandshake", "draft"),
-    ])
-    result = _postprocess_what_if(data)
-    statuses = [s["status"] for s in result["scenarios"]]
-    assert statuses == ["applied", "draft", "draft"]
+    statuses = [a["status"] for a in result["alternatives"]]
+    assert statuses == ["draft", "draft", "draft"]
 
 
 # Architecture no longer has bespoke postprocessing — see

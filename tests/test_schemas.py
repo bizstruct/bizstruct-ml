@@ -197,39 +197,64 @@ SCENARIO_EXAMPLE = {
     },
 }
 
+def _errc_move(action: str, section: str, target: str, new_text: str | None = None) -> dict:
+    move = {
+        "action": action,
+        "target_section": section,
+        "target": target,
+        "rationale_uk": "Обґрунтування ходу довжиною понад десять символів.",
+        "rationale_en": "Rationale for this move, long enough to pass validation.",
+    }
+    if action in ("reduce", "raise"):
+        move["new_text"] = new_text or "Replacement text for the existing card, long enough to pass validation"
+    return move
+
+
 WHAT_IF_EXAMPLE = {
-    "scenarios": [
+    "alternatives": [
         {
             "id": "00000000-0000-0000-0000-000000000100",
-            "vector": "Financial",
-            "color": "indigo",
-            "icon": "coins",
-            "title": "What if we offered outcome-based pricing?",
-            "description": "Charge only when the ESG report passes regulatory review. Aligns incentives with customer success.",
-            "value": "Zero risk for the customer — pay only for results",
-            "revenue": "Potential 2x revenue per client at €4000/report",
-            "status": "applied",
+            "title_uk": "Ціноутворення за результатом",
+            "title_en": "Outcome-based pricing",
+            "premise_uk": "Стягувати плату лише коли ESG-звіт проходить регуляторну перевірку.",
+            "premise_en": "Charge only when the ESG report passes regulatory review.",
+            "moves": [
+                _errc_move("eliminate", "revenue_streams", "Fixed monthly subscription fee"),
+                _errc_move("reduce", "cost_structure", "Upfront onboarding cost"),
+                _errc_move("raise", "value_propositions", "Regulatory-review guarantee"),
+            ],
+            "expected_impact_uk": "Потенційно вдвічі більший дохід на клієнта.",
+            "expected_impact_en": "Potential 2x revenue per client.",
+            "status": "draft",
         },
         {
             "id": "00000000-0000-0000-0000-000000000101",
-            "vector": "Technical",
-            "color": "teal",
-            "icon": "cpu",
-            "title": "What if we built real-time ESG monitoring?",
-            "description": "Continuous data collection instead of quarterly batch processing. Enables proactive compliance.",
-            "value": "Always-current ESG score, instant alerts on deviations",
-            "revenue": "Premium tier at €8000/month, 30% higher retention",
+            "title_uk": "Моніторинг у реальному часі",
+            "title_en": "Real-time ESG monitoring",
+            "premise_uk": "Безперервний збір даних замість квартальної пакетної обробки.",
+            "premise_en": "Continuous data collection instead of quarterly batch processing.",
+            "moves": [
+                _errc_move("eliminate", "key_activities", "Quarterly manual data review"),
+                _errc_move("raise", "key_resources", "Real-time data pipeline"),
+                _errc_move("create", "revenue_streams", "Premium real-time monitoring tier"),
+            ],
+            "expected_impact_uk": "Преміум-тариф з вищим утриманням клієнтів.",
+            "expected_impact_en": "Premium tier with higher retention.",
             "status": "draft",
         },
         {
             "id": "00000000-0000-0000-0000-000000000102",
-            "vector": "Emotional",
-            "color": "slate",
-            "icon": "heartHandshake",
-            "title": "What if we made ESG a competitive advantage story?",
-            "description": "Reframe ESG from compliance burden to brand differentiator. Help customers market their scores.",
-            "value": "Pride in sustainability leadership, not just compliance",
-            "revenue": "Brand partnership revenue stream, €500k/year potential",
+            "title_uk": "Бренд сталого розвитку",
+            "title_en": "Sustainability leadership brand",
+            "premise_uk": "Перетворити ESG з тягаря на конкурентну перевагу бренду.",
+            "premise_en": "Reframe ESG from compliance burden to brand differentiator.",
+            "moves": [
+                _errc_move("reduce", "customer_relationships", "Purely transactional support"),
+                _errc_move("raise", "channels", "Public sustainability showcase"),
+                _errc_move("create", "revenue_streams", "Brand partnership revenue stream"),
+            ],
+            "expected_impact_uk": "Новий потік доходу від партнерств.",
+            "expected_impact_en": "New brand partnership revenue stream.",
             "status": "draft",
         },
     ]
@@ -289,9 +314,9 @@ def test_scenario_schema():
 
 def test_what_if_schema():
     result = WhatIf.model_validate(WHAT_IF_EXAMPLE)
-    assert len(result.scenarios) == 3
-    assert result.scenarios[0].vector == "Financial"
-    assert result.scenarios[0].status == "applied"
+    assert len(result.alternatives) == 3
+    assert result.alternatives[0].title_en == "Outcome-based pricing"
+    assert result.alternatives[0].status == "draft"
 
 
 def test_architecture_schema():

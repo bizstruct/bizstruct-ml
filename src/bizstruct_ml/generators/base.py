@@ -9,8 +9,8 @@ from bizstruct_ml.llm.client import LLMClient, LLMError
 from bizstruct_ml.llm.prompts._shared import context_blocks_used
 from bizstruct_ml.observability import tracing
 from bizstruct_ml.schemas.project import ProjectState
-from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
 from bizstruct_domain.blocks.canvas import CanvasGenerated
+from bizstruct_domain.blocks.what_if import WhatIfGenerated
 from bizstruct_domain.blocks.architecture import Architecture
 from bizstruct_domain.blocks.empathy_map import EmpathyMap
 from bizstruct_domain.blocks.scenario import Scenario
@@ -18,8 +18,6 @@ from bizstruct_domain.blocks.pitch import Pitch
 from bizstruct_domain.blocks.hypotheses import Hypotheses
 from bizstruct_domain.blocks.models_options import ModelsOptions
 
-_VECTOR_COLOR = {"Financial": "indigo", "Technical": "teal", "Emotional": "slate"}
-_VECTOR_ICON = {"Financial": "coins", "Technical": "cpu", "Emotional": "heartHandshake"}
 _MONETIZATION_ORDER = ["subscription", "transaction_fee", "retainer_plus_saas"]
 
 
@@ -45,21 +43,15 @@ def _postprocess_canvas(data: CanvasGenerated) -> dict:
     return dump
 
 
-def _postprocess_what_if(data: WhatIf) -> dict:
-    vector_order = ["Financial", "Technical", "Emotional"]
-    sorted_scenarios = sorted(
-        data.scenarios,
-        key=lambda s: vector_order.index(s.vector) if s.vector in vector_order else 99,
-    )
-    fixed: list[WhatIfScenario] = []
-    for i, s in enumerate(sorted_scenarios):
-        fixed.append(s.model_copy(update={
-            "id": uuid4(),
-            "color": _VECTOR_COLOR[s.vector],
-            "icon": _VECTOR_ICON[s.vector],
-            "status": "applied" if i == 0 else "draft",
-        }))
-    return WhatIf(scenarios=fixed).model_dump(mode="json")
+def _postprocess_what_if(data: WhatIfGenerated) -> dict:
+    # Only the id is assigned here (placeholder -> real, same as every
+    # other block). Status is NOT touched: WhatIfGenerated's own validator
+    # already guarantees every alternative came back status=draft — see
+    # bizstruct-domain's what_if module docstring, B1. Deciding which (if
+    # any) alternative is applied is a user action on the persisted Canvas/
+    # WhatIf, not something generation or postprocessing does.
+    fixed = [alt.model_copy(update={"id": uuid4()}) for alt in data.alternatives]
+    return WhatIfGenerated(alternatives=fixed).model_dump(mode="json")
 
 
 class BaseGenerator:
@@ -200,7 +192,7 @@ class ScenarioGenerator(BaseGenerator):
 
 class WhatIfGenerator(BaseGenerator):
     block = "what_if"
-    schema = WhatIf
+    schema = WhatIfGenerated
 
     def build_prompt(self, project: ProjectState) -> list[dict]:
         from bizstruct_ml.llm.prompts.what_if import build_messages
