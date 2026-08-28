@@ -1,0 +1,38 @@
+{
+  "run_id": "calibration__gpt-5.6-terra__v1__1787931788",
+  "configuration": "calibration",
+  "deployment": "gpt-5.6-terra",
+  "model_version": null,
+  "endpoint": "https://bizstruct-manual.openai.azure.com",
+  "temperature": null,
+  "generation_params": {},
+  "guardrails": null,
+  "dataset_path": "/home/ubuntu/projects/personal/bizstruct/bizstruct-ml/experiments/dataset.json",
+  "dataset_sha256": "5326ce76893063a8a0e5f243c3ad3b6ac7ff29228a3260bab364f594ddbcc578",
+  "dataset_size": 74130,
+  "domain_version": "0.9.0",
+  "git_commits": {
+    "bizstruct-domain": "bbee62b",
+    "bizstruct-be": "3063fd5",
+    "bizstruct-ml": "fffe084",
+    "bizstruct-fe": "afef7d8"
+  },
+  "git_dirty": {
+    "bizstruct-domain": false,
+    "bizstruct-be": false,
+    "bizstruct-ml": true,
+    "bizstruct-fe": false
+  },
+  "concurrency": 5,
+  "project_timeout": 1200.0,
+  "poll_interval": 5.0,
+  "worker_replicas": 1,
+  "started_at": "2026-08-28T15:43:08.989447+00:00",
+  "finished_at": "2026-08-28T15:50:40.255052+00:00",
+  "mode": "calibration",
+  "language": "en",
+  "meta_warnings": [
+    "azure_deployment_info: --azure-resource-group/--azure-account-name not given, skipping model_version/guardrails lookup",
+    "temperature/generation_params: bizstruct_ml.llm.client.LLMClient does not set temperature or any other sampling parameter \u2014 the API default applies, unrecorded anywhere in the worker's own config."
+  ]
+}

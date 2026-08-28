@@ -8,6 +8,13 @@ httpx, pydantic, langfuse, tenacity, openai — are on the path):
     uv run python -m experiments.cli variance
     uv run python -m experiments.cli language-comparison --language uk
     uv run python -m experiments.cli language-comparison --language en
+    uv run python -m experiments.cli calibration-set --version v1
+    uv run python -m experiments.cli calibration-export --version v1
+    uv run python -m experiments.cli calibration-degrade --action export --idea-id idea-001 --out /tmp/idea-001.json
+    uv run python -m experiments.cli calibration-degrade --action import --idea-id idea-001 --in /tmp/idea-001.json --criterion K1
+    uv run python -m experiments.cli calibration-input --action template --out /tmp/scores_template.csv
+    uv run python -m experiments.cli calibration-input --action validate --in /tmp/scores_filled.csv
+    uv run python -m experiments.cli calibration-report --version v1
     uv run python -m experiments.cli export-metrics
     uv run python -m experiments.cli report
     uv run python -m experiments.cli compare --results-dir ... --results-dir ...
@@ -268,6 +275,178 @@ def _pilot_cost_projection(args, out_dir: Path, wall_seconds: float, n_ran: int)
     )
 
 
+CALIBRATION_ROOT = Path(__file__).parent / "calibration" / "sets"
+
+
+def _calibration_set_dir(version: str) -> Path:
+    return CALIBRATION_ROOT / version
+
+
+def cmd_calibration_set(args) -> None:
+    """Generates the 5-project rubric-calibration set (part A of the
+    calibration brief) — pipeline mode, English, on the given --deployment
+    (gpt-5.6-terra for the real calibration run). Reuses the same run_meta/
+    runner machinery as main/pilot/variance/language-comparison; the only
+    difference is the fixed 5-idea plan (build_plan's 'calibration' mode)
+    and the out-dir, which is the versioned calibration/sets/<version>/
+    directory rather than results/ — kept separate so a later rubric
+    change can't accidentally overwrite the artifact it needs to be
+    compared against."""
+    from experiments.run_meta import build_run_meta, finalize_run_meta, read_ml_env, write_run_meta
+
+    deployment = _resolve_deployment(args)
+    out_dir = _calibration_set_dir(args.version)
+    if out_dir.exists() and any(out_dir.iterdir()) and not args.overwrite:
+        raise SystemExit(
+            f"{out_dir} already exists and is non-empty — calibration sets are versioned artifacts, "
+            f"not meant to be silently overwritten. Pass a new --version or --overwrite to replace it."
+        )
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    ideas = load_dataset(args.dataset)
+    tasks = build_plan(ideas, "calibration", language="en")
+    idea_ids = [t.idea.id for t in tasks]
+    print(f"[calibration-set] version={args.version!r} running {len(tasks)} ideas: {', '.join(idea_ids)}")
+
+    run_meta = build_run_meta(
+        run_id=f"calibration__{deployment}__{args.version}__{int(time.time())}",
+        configuration="calibration",
+        mode="calibration",
+        dataset_path=args.dataset,
+        concurrency=args.concurrency,
+        project_timeout=args.project_timeout,
+        poll_interval=args.poll_interval,
+        ml_env=read_ml_env(args.ml_env_file),
+        azure_resource_group=args.azure_resource_group,
+        azure_account_name=args.azure_account_name,
+        language="en",
+    )
+    write_run_meta(run_meta, out_dir)
+    for w in run_meta.meta_warnings:
+        print(f"[run_meta] warning: {w}")
+
+    # Explicit record of exactly which 5 ideas this version pins — the
+    # brief asks this be fixed, and runs.jsonl alone requires parsing to
+    # recover it.
+    import json as _json
+    (out_dir / "idea_ids.json").write_text(_json.dumps({"idea_ids": idea_ids}, indent=2), encoding="utf-8")
+
+    runs_path = out_dir / "runs.jsonl"
+    base_url, api_key = _backend_client_args()
+
+    start = time.monotonic()
+    asyncio.run(
+        run_plan(
+            tasks,
+            backend_base_url=base_url,
+            backend_api_key=api_key,
+            runs_path=runs_path,
+            concurrency=args.concurrency,
+            poll_interval=args.poll_interval,
+            project_timeout=args.project_timeout,
+        )
+    )
+    wall_seconds = time.monotonic() - start
+    finalize_run_meta(out_dir)
+    print(f"[calibration-set] wall-clock time: {wall_seconds:.0f}s ({wall_seconds / 60:.1f} min)")
+    print(f"[calibration-set] set dir: {out_dir}")
+
+    print("[calibration-set] waiting for Langfuse to flush, then exporting metrics for cost visibility...")
+    time.sleep(15)
+    try:
+        client = _langfuse_client()
+        records = list(load_existing_results(runs_path).values())
+        incomplete = _export(client, records, out_dir / "metrics.csv")
+        _print_incomplete(incomplete)
+        generate_report(
+            runs_path, out_dir / "metrics.csv", out_dir / "summary.md",
+            input_price_per_1k=args.input_price_per_1k, output_price_per_1k=args.output_price_per_1k,
+        )
+        totals = load_metrics_totals(out_dir / "metrics.csv")
+        print(f"[calibration-set] {totals.input_tokens:,} input tokens, {totals.output_tokens:,} output tokens")
+        if args.input_price_per_1k is not None and args.output_price_per_1k is not None:
+            cost = estimate_cost(totals.input_tokens, totals.output_tokens, args.input_price_per_1k, args.output_price_per_1k)
+            print(f"[calibration-set] cost: ~${cost:,.4f}")
+    except SystemExit as e:
+        print(f"[calibration-set] skipping cost export — {e}")
+
+
+def cmd_calibration_export(args) -> None:
+    from experiments.calibration.export import build_calibration_export
+
+    set_dir = _calibration_set_dir(args.version)
+    out_dir = set_dir / "export"
+    keys_dir = set_dir / "keys"
+    ideas = load_dataset(args.dataset)
+    idea_texts = {i.id: i.text for i in ideas}
+
+    exported = build_calibration_export(set_dir, out_dir, keys_dir, idea_texts, seed=args.seed)
+    for e in exported:
+        flag = " [degraded]" if e.degraded else ""
+        print(f"[calibration-export] {e.file_id} <- {e.idea_id}{flag}, ~{e.tokens_estimated} tokens")
+    print(f"[calibration-export] wrote {len(exported)} files to {out_dir}")
+    print(f"[calibration-export] key + token counts: {keys_dir}")
+
+
+def cmd_calibration_degrade(args) -> None:
+    from experiments.calibration.degrade import export_for_editing, import_edited
+
+    set_dir = _calibration_set_dir(args.version)
+    if args.action == "export":
+        if args.out is None:
+            raise SystemExit("--out is required for --action export")
+        export_for_editing(set_dir, args.idea_id, args.out)
+        print(f"[calibration-degrade] wrote {args.out} — edit it by hand, then run 'calibration-degrade import'")
+    elif args.action == "import":
+        if args.in_path is None or args.criterion is None:
+            raise SystemExit("--in and --criterion are required for --action import")
+        result = import_edited(set_dir, args.idea_id, args.in_path, args.criterion, note=args.note or "")
+        if result.ok:
+            print(f"[calibration-degrade] structure OK — degraded/{args.idea_id}.json written, manifest updated")
+        else:
+            print("[calibration-degrade] structural check FAILED — nothing written:")
+            for err in result.errors:
+                print(f"  - {err}")
+            raise SystemExit(1)
+
+
+def cmd_calibration_input(args) -> None:
+    from experiments.calibration.export import FILE_LETTERS
+    from experiments.calibration.scoring import store_scores, validate_scores, write_score_template
+
+    file_ids = [f"project-{letter}" for letter in FILE_LETTERS]
+
+    if args.action == "template":
+        if args.out is None:
+            raise SystemExit("--out is required for --action template")
+        write_score_template(args.out, file_ids)
+        print(f"[calibration-input] wrote template ({len(file_ids)} files x 3 rounds x 5 criteria) to {args.out}")
+        return
+
+    # action == "validate"
+    if args.in_path is None:
+        raise SystemExit("--in is required for --action validate")
+    set_dir = _calibration_set_dir(args.version)
+    result = validate_scores(args.in_path, file_ids)
+    if not result.ok:
+        print("[calibration-input] validation FAILED — nothing stored:")
+        for err in result.errors:
+            print(f"  - {err}")
+        raise SystemExit(1)
+    stored_path = store_scores(set_dir, result.rows)
+    print(f"[calibration-input] {len(result.rows)} rows valid, stored at {stored_path}")
+
+
+def cmd_calibration_report(args) -> None:
+    from experiments.calibration.scoring import build_calibration_report
+
+    set_dir = _calibration_set_dir(args.version)
+    keys_dir = set_dir / "keys"
+    out_path = args.out or (set_dir / "calibration_report.md")
+    build_calibration_report(set_dir, keys_dir, out_path)
+    print(f"[calibration-report] wrote {out_path}")
+
+
 def cmd_export_metrics(args) -> None:
     deployment = args.deployment or _current_or_none(args)
     out_dir = args.out_dir or _default_out_dir(args, deployment)
@@ -388,6 +567,59 @@ def main() -> None:
     p_export = sub.add_parser("export-metrics", help="Pull token/latency/retry metrics from Langfuse into metrics.csv")
     _common_args(p_export)
     p_export.set_defaults(func=cmd_export_metrics)
+
+    # ── rubric calibration (manual evaluation) ──────────────────────────
+    p_cal_set = sub.add_parser(
+        "calibration-set",
+        help="Generate the 5-project rubric-calibration set (pipeline, English, "
+             "into calibration/sets/<version>/ — a versioned artifact).",
+    )
+    _common_args(p_cal_set)
+    p_cal_set.add_argument("--version", default="v1", help="Names the set directory; bump this for a fresh set.")
+    p_cal_set.add_argument("--overwrite", action="store_true", help="Allow overwriting a non-empty existing version.")
+    p_cal_set.set_defaults(func=cmd_calibration_set)
+
+    p_cal_export = sub.add_parser(
+        "calibration-export",
+        help="Build the 5 self-contained project-A.md..project-E.md judge files "
+             "from a calibration set, plus the (separate) key/token-count files.",
+    )
+    p_cal_export.add_argument("--version", default="v1")
+    p_cal_export.add_argument("--dataset", type=Path, default=Path(__file__).parent / "dataset.json")
+    p_cal_export.add_argument("--seed", type=int, default=None, help="Optional fixed seed for the file-letter/criteria-order shuffle.")
+    p_cal_export.set_defaults(func=cmd_calibration_export)
+
+    p_cal_degrade = sub.add_parser(
+        "calibration-degrade",
+        help="Export one calibration-set project for hand-editing, or import an "
+             "edited file back with a structural check (part C).",
+    )
+    p_cal_degrade.add_argument("--version", default="v1")
+    p_cal_degrade.add_argument("--action", choices=["export", "import"], required=True)
+    p_cal_degrade.add_argument("--idea-id", required=True)
+    p_cal_degrade.add_argument("--out", type=Path, help="Where to write the editable file (export).")
+    p_cal_degrade.add_argument("--in", dest="in_path", type=Path, help="The hand-edited file to import (import).")
+    p_cal_degrade.add_argument("--criterion", choices=["K1", "K2"], help="Which criterion this degrades (import).")
+    p_cal_degrade.add_argument("--note", default="", help="Free-text note for the manifest (import).")
+    p_cal_degrade.set_defaults(func=cmd_calibration_degrade)
+
+    p_cal_input = sub.add_parser(
+        "calibration-input",
+        help="Write a blank scores template, or validate+store a filled-in one (part D).",
+    )
+    p_cal_input.add_argument("--version", default="v1")
+    p_cal_input.add_argument("--action", choices=["template", "validate"], required=True)
+    p_cal_input.add_argument("--out", type=Path, help="Where to write the template (template).")
+    p_cal_input.add_argument("--in", dest="in_path", type=Path, help="The filled-in scores CSV (validate).")
+    p_cal_input.set_defaults(func=cmd_calibration_input)
+
+    p_cal_report = sub.add_parser(
+        "calibration-report",
+        help="Build calibration_report.md from stored scores + the key/degraded-manifest files.",
+    )
+    p_cal_report.add_argument("--version", default="v1")
+    p_cal_report.add_argument("--out", type=Path, default=None)
+    p_cal_report.set_defaults(func=cmd_calibration_report)
 
     p_report = sub.add_parser("report", help="Regenerate summary.md from runs.jsonl + metrics.csv + run_meta.json")
     _common_args(p_report)

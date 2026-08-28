@@ -41,3 +41,9 @@ allow-direct-references = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Lets test_calibration.py import experiments.calibration.* directly
+# (experiments/ isn't an installed package — it's dev tooling excluded
+# from the worker's own Docker image, see Dockerfile — so it needs the
+# repo root on sys.path the same way `python -m experiments.cli` gets it
+# for free but pytest doesn't).
+pythonpath = ["."]
