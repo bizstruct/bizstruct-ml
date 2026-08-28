@@ -9,6 +9,7 @@ from bizstruct_ml.llm.client import LLMClient, LLMError
 from bizstruct_ml.llm.prompts._shared import context_blocks_used
 from bizstruct_ml.observability import tracing
 from bizstruct_ml.schemas.project import ProjectState
+from bizstruct_ml.validation.degenerate_text import DegenerateTextError, validate_block_text
 from bizstruct_domain.blocks.canvas import CanvasGenerated
 from bizstruct_domain.blocks.what_if import WhatIfGenerated
 from bizstruct_domain.blocks.architecture import Architecture
@@ -82,7 +83,7 @@ class BaseGenerator:
         @retry(
             stop=stop_after_attempt(settings.llm_max_retries + 1),
             wait=wait_exponential(min=2, max=8),
-            retry=retry_if_exception_type((LLMError, ValidationError)),
+            retry=retry_if_exception_type((LLMError, ValidationError, DegenerateTextError)),
             reraise=True,
         )
         async def _run() -> dict:
@@ -101,6 +102,27 @@ class BaseGenerator:
             with tracing.span("postprocess") as pp_span:
                 data = self.postprocess(result)
                 pp_span.update(output=data)
+
+            # Pydantic's own schema (min_length/max_length/enums/cross-field
+            # validators) can't catch a syntactically-valid-but-degenerate
+            # string — see validation/degenerate_text.py's module docstring.
+            # Always recorded to Langfuse (even log-only violations), since
+            # otherwise there's no way to measure how often this happens
+            # across a real experimental run.
+            with tracing.span("validate_text") as vt_span:
+                violations = validate_block_text(self.schema, data, project.translation_key or "en")
+                vt_span.update(
+                    metadata={
+                        "violations": [
+                            {"field": v.field_path, "kind": v.kind, "detail": v.detail, "retry_worthy": v.retry_worthy}
+                            for v in violations
+                        ]
+                    }
+                )
+                retry_worthy = [v for v in violations if v.retry_worthy]
+                if retry_worthy:
+                    raise DegenerateTextError(retry_worthy)
+
             return data
 
         try:

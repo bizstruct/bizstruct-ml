@@ -1,0 +1,36 @@
+{
+  "run_id": "A_pipeline_dataquality__gpt-5.6-terra__pilot__1787845635",
+  "configuration": "A_pipeline_dataquality",
+  "deployment": "gpt-5.6-terra",
+  "model_version": "2026-07-09",
+  "endpoint": "https://bizstruct-manual.openai.azure.com",
+  "temperature": null,
+  "generation_params": {},
+  "guardrails": "Microsoft.DefaultV2",
+  "dataset_path": "/home/ubuntu/projects/personal/bizstruct/bizstruct-ml/experiments/dataset.json",
+  "dataset_sha256": "5326ce76893063a8a0e5f243c3ad3b6ac7ff29228a3260bab364f594ddbcc578",
+  "dataset_size": 74130,
+  "domain_version": "0.9.0",
+  "git_commits": {
+    "bizstruct-domain": "32e22dd",
+    "bizstruct-be": "f207330",
+    "bizstruct-ml": "6328aa3",
+    "bizstruct-fe": "a4b3e73"
+  },
+  "git_dirty": {
+    "bizstruct-domain": false,
+    "bizstruct-be": true,
+    "bizstruct-ml": true,
+    "bizstruct-fe": false
+  },
+  "concurrency": 5,
+  "project_timeout": 1200.0,
+  "poll_interval": 5.0,
+  "worker_replicas": 1,
+  "started_at": "2026-08-27T15:47:17.440933+00:00",
+  "finished_at": "2026-08-27T15:53:24.005700+00:00",
+  "mode": "pilot",
+  "meta_warnings": [
+    "temperature/generation_params: bizstruct_ml.llm.client.LLMClient does not set temperature or any other sampling parameter \u2014 the API default applies, unrecorded anywhere in the worker's own config."
+  ]
+}

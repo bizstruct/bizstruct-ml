@@ -114,6 +114,7 @@ def trace_block_generation(
     mode: str,
     attempt_number: int,
     domain_version: str,
+    language: str,
 ) -> Iterator[Any]:
     """Root span for processing one queue message end to end.
 
@@ -139,13 +140,14 @@ def trace_block_generation(
 
             prop_factory = lambda: propagate_attributes(  # noqa: E731
                 session_id=project_id,
-                tags=[block, mode],
+                tags=[block, mode, f"language:{language}"],
                 trace_name="generate_block",
                 metadata={
                     "project_id": project_id,
                     "block": block,
                     "attempt_number": attempt_number,
                     "bizstruct_domain_version": domain_version,
+                    "language": language,
                 },
             )
         except Exception:

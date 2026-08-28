@@ -1,0 +1,36 @@
+{
+  "run_id": "A_pipeline__gpt-5.6-sol__pilot__1787829747",
+  "configuration": "A_pipeline",
+  "deployment": "gpt-5.6-sol",
+  "model_version": "2026-07-09",
+  "endpoint": "https://bizstruct-manual.openai.azure.com",
+  "temperature": null,
+  "generation_params": {},
+  "guardrails": "Microsoft.DefaultV2",
+  "dataset_path": "/home/ubuntu/projects/personal/bizstruct/bizstruct-ml/experiments/dataset.json",
+  "dataset_sha256": "5326ce76893063a8a0e5f243c3ad3b6ac7ff29228a3260bab364f594ddbcc578",
+  "dataset_size": 74130,
+  "domain_version": "0.8.1",
+  "git_commits": {
+    "bizstruct-domain": "a0928e9",
+    "bizstruct-be": "f207330",
+    "bizstruct-ml": "6328aa3",
+    "bizstruct-fe": "a4b3e73"
+  },
+  "git_dirty": {
+    "bizstruct-domain": false,
+    "bizstruct-be": false,
+    "bizstruct-ml": true,
+    "bizstruct-fe": false
+  },
+  "concurrency": 5,
+  "project_timeout": 1200.0,
+  "poll_interval": 5.0,
+  "worker_replicas": 1,
+  "started_at": "2026-08-27T11:22:28.409081+00:00",
+  "finished_at": "2026-08-27T11:41:02.243033+00:00",
+  "mode": "pilot",
+  "meta_warnings": [
+    "temperature/generation_params: bizstruct_ml.llm.client.LLMClient does not set temperature or any other sampling parameter \u2014 the API default applies, unrecorded anywhere in the worker's own config."
+  ]
+}

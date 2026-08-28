@@ -117,6 +117,7 @@ async def handle_message(
         mode="pipeline",
         attempt_number=attempt_number,
         domain_version=bizstruct_domain.__version__,
+        language=msg.language,
     ) as root_span:
         try:
             await _process_block(msg, sb_message, backend, pubsub, bound_log, project_id, block, root_span)

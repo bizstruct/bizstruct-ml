@@ -1,8 +1,9 @@
 from bizstruct_ml.schemas.project import ProjectState
-from ._shared import bilingual_system, context_section
+from ._shared import base_system, context_section
 
 
 def build_messages(project: ProjectState) -> list[dict]:
+    lang = project.translation_key or "en"
     user = f"""Project: {project.title}
 Idea: {project.idea}{context_section(project)}
 
@@ -36,11 +37,8 @@ Customer deck (exactly 5 slides in this order):
 
 Rules:
 - headline: max 80 characters, impact-driven
-- content: 1-2 sentences, specific numbers where possible
-- Every text field is bilingual: provide both a Ukrainian (_uk) and an
-  English (_en) version of the same content — translate, don't write
-  unrelated content per language"""
+- content: 1-2 sentences, specific numbers where possible"""
     return [
-        {"role": "system", "content": bilingual_system()},
+        {"role": "system", "content": base_system(lang)},
         {"role": "user", "content": user},
     ]

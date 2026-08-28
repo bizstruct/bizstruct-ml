@@ -107,8 +107,7 @@ def _make_move(action: ERRCAction) -> ERRCMove:
         action=action,
         target_section=CanvasSection.KEY_PARTNERS,
         target="Third-party logistics partner",
-        rationale_uk="Скорочує залежність від зовнішнього партнера.",
-        rationale_en="Reduces dependency on an external partner.",
+        rationale="Reduces dependency on an external partner.",
     )
     if action in (ERRCAction.REDUCE, ERRCAction.RAISE_):
         kwargs["new_text"] = "Regional logistics partner, smaller contract"
@@ -118,17 +117,14 @@ def _make_move(action: ERRCAction) -> ERRCMove:
 def _make_alternative() -> WhatIfAlternative:
     return WhatIfAlternative(
         id=uuid4(),
-        title_uk="Пряма доставка",
-        title_en="Direct delivery",
-        premise_uk="Прибрати посередників у логістиці.",
-        premise_en="Remove logistics intermediaries.",
+        title="Direct delivery",
+        premise="Remove logistics intermediaries.",
         moves=[
             _make_move(ERRCAction.ELIMINATE),
             _make_move(ERRCAction.REDUCE),
             _make_move(ERRCAction.RAISE_),
         ],
-        expected_impact_uk="Нижча собівартість доставки.",
-        expected_impact_en="Lower delivery cost.",
+        expected_impact="Lower delivery cost.",
     )
 
 

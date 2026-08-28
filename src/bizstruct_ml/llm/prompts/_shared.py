@@ -58,11 +58,3 @@ def base_system(language: str) -> str:
         "Return ONLY valid JSON that matches the provided schema — no prose, no markdown fences.\n"
         f"Generate content in language: {language}."
     )
-
-
-def bilingual_system() -> str:
-    return (
-        "You are a business model generation expert.\n"
-        "Return ONLY valid JSON that matches the provided schema — no prose, no markdown fences.\n"
-        "Generate content in BOTH Ukrainian (uk) and English (en) simultaneously."
-    )

@@ -1,5 +1,5 @@
 from bizstruct_ml.schemas.project import ProjectState
-from ._shared import bilingual_system, context_section
+from ._shared import base_system, context_section
 
 _EPICENTERS = """\
 - resource_driven — the model is built around a key resource (technology, patent, brand, location).
@@ -22,6 +22,7 @@ _PATTERNS = """\
 
 
 def build_messages(project: ProjectState) -> list[dict]:
+    lang = project.translation_key or "en"
     user = f"""Project: {project.title}
 Idea: {project.idea}{context_section(project)}
 
@@ -63,10 +64,8 @@ and pattern describe how the CANVAS is structured.
 
 4. Rationale — for both the epicenter and the pattern, write a substantive
    explanation (roughly 2-4 sentences, specific to this idea, not generic
-   boilerplate) in BOTH Ukrainian and English:
-   - epicenter_rationale_uk / epicenter_rationale_en
-   - pattern_rationale_uk / pattern_rationale_en"""
+   boilerplate): epicenter_rationale, pattern_rationale."""
     return [
-        {"role": "system", "content": bilingual_system()},
+        {"role": "system", "content": base_system(lang)},
         {"role": "user", "content": user},
     ]

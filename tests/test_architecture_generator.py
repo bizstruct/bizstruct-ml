@@ -8,8 +8,7 @@ from pydantic import ValidationError
 from bizstruct_ml.generators.base import ArchitectureGenerator
 from bizstruct_ml.schemas.project import ProjectState
 
-RATIONALE_UK = "Достатньо довге обґрунтування українською, щоб пройти перевірку мінімальної довжини поля."
-RATIONALE_EN = "A rationale long enough in English to satisfy the field's minimum length validation."
+RATIONALE = "A rationale long enough in English to satisfy the field's minimum length validation."
 
 
 def _project() -> ProjectState:
@@ -24,12 +23,10 @@ def _project() -> ProjectState:
 def _valid_payload(**overrides) -> dict:
     payload = dict(
         epicenter="customer_driven",
-        epicenter_rationale_uk=RATIONALE_UK,
-        epicenter_rationale_en=RATIONALE_EN,
+        epicenter_rationale=RATIONALE,
         pattern="free",
         pattern_subtype="freemium",
-        pattern_rationale_uk=RATIONALE_UK,
-        pattern_rationale_en=RATIONALE_EN,
+        pattern_rationale=RATIONALE,
     )
     payload.update(overrides)
     return payload

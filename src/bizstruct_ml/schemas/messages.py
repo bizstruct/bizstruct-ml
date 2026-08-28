@@ -23,6 +23,14 @@ class QueueMessage(BaseModel):
     # "regenerate" action) — idempotency is bypassed even if the block
     # already has data, since that's the whole point of asking for it again.
     force: bool = False
+    # Language to generate this block in ("uk"/"en") — the project's own
+    # setting (bizstruct-be's `translation_key`), threaded through here so
+    # it's known before the project fetch and can go straight into the
+    # Langfuse trace's metadata/tags at span-open time. The generators
+    # themselves still read language off the fetched ProjectState (see
+    # llm/prompts/*.py) — this field exists for early trace attribution,
+    # not as a second source of truth for prompt building.
+    language: str = "en"
 
 
 class HookPayload(BaseModel):

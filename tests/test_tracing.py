@@ -62,7 +62,7 @@ class _FakeClient:
 def test_disabled_by_default_yields_noop_and_never_raises():
     with tracing.trace_block_generation(
         project_id="p1", block="architecture", mode="pipeline",
-        attempt_number=1, domain_version="0.1.0",
+        attempt_number=1, domain_version="0.1.0", language="en",
     ) as root:
         assert root is tracing.NOOP
         with tracing.span("fetch_project") as s:
@@ -88,7 +88,7 @@ def test_mocked_client_creates_expected_span_tree(monkeypatch):
 
     with tracing.trace_block_generation(
         project_id="proj-1", block="architecture", mode="pipeline",
-        attempt_number=2, domain_version="0.1.0",
+        attempt_number=2, domain_version="0.1.0", language="en",
     ):
         with tracing.span("fetch_project"):
             pass
@@ -159,7 +159,7 @@ def test_client_that_raises_on_every_call_does_not_break_generation(monkeypatch)
     ran = {"body": False}
     with tracing.trace_block_generation(
         project_id="p1", block="architecture", mode="pipeline",
-        attempt_number=1, domain_version="0.1.0",
+        attempt_number=1, domain_version="0.1.0", language="en",
     ):
         with tracing.span("fetch_project"):
             ran["body"] = True

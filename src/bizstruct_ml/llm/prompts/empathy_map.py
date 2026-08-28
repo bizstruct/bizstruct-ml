@@ -1,8 +1,9 @@
 from bizstruct_ml.schemas.project import ProjectState
-from ._shared import bilingual_system, context_section
+from ._shared import base_system, context_section
 
 
 def build_messages(project: ProjectState) -> list[dict]:
+    lang = project.translation_key or "en"
     user = f"""Project: {project.title}
 Idea: {project.idea}{context_section(project)}
 
@@ -20,12 +21,10 @@ Structure: six sections — says, thinks, does, feels, pains, gains.
 Rules:
 - Use a real job title/role as the persona (reflected consistently across items)
 - 3-6 items per section
-- Each item: id (integer starting from 1 within its section), and BOTH a
-  Ukrainian (text_uk) and English (text_en) version of the same statement —
-  translate, don't write unrelated content per language
-- Each item text must be a full statement, not a single word or fragment
+- Each item: id (integer starting from 1 within its section), and text — a
+  full statement, not a single word or fragment
 - Items must be grounded in specific pains from the idea"""
     return [
-        {"role": "system", "content": bilingual_system()},
+        {"role": "system", "content": base_system(lang)},
         {"role": "user", "content": user},
     ]
