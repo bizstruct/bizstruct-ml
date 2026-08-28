@@ -78,7 +78,7 @@ wheels = [
 [[package]]
 name = "bizstruct-domain"
 version = "0.9.0"
-source = { git = "https://github.com/bizstruct/bizstruct-domain?rev=bbee62baff73b4c40eadedc7a285274bf63b15c0#bbee62baff73b4c40eadedc7a285274bf63b15c0" }
+source = { git = "https://github.com/bizstruct/bizstruct-domain?rev=v0.9.0#f60da1e2ffcb024bcca562cc9c4962aa04c9c6b9" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -111,7 +111,7 @@ dev = [
 requires-dist = [
     { name = "azure-messaging-webpubsubservice", specifier = ">=1.1.0" },
     { name = "azure-servicebus", specifier = ">=7.12.0" },
-    { name = "bizstruct-domain", git = "https://github.com/bizstruct/bizstruct-domain?rev=bbee62baff73b4c40eadedc7a285274bf63b15c0" },
+    { name = "bizstruct-domain", git = "https://github.com/bizstruct/bizstruct-domain?rev=v0.9.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "langfuse", specifier = ">=4.0.0" },
     { name = "openai", specifier = ">=1.40.0" },
