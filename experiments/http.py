@@ -64,9 +64,10 @@ class BackendClient:
 
             return response
 
-    async def create_project(self, idea_text: str, title: str) -> str:
+    async def create_project(self, idea_text: str, title: str, language: str = "en") -> str:
         response = await self._request_with_retry(
-            "POST", "/api/generation", json_body={"title": title, "idea": idea_text}
+            "POST", "/api/generation",
+            json_body={"title": title, "idea": idea_text, "language": language},
         )
         response.raise_for_status()
         body = response.json()

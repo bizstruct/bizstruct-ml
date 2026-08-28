@@ -6,6 +6,8 @@ httpx, pydantic, langfuse, tenacity, openai — are on the path):
     uv run python -m experiments.cli pilot
     uv run python -m experiments.cli main
     uv run python -m experiments.cli variance
+    uv run python -m experiments.cli language-comparison --language uk
+    uv run python -m experiments.cli language-comparison --language en
     uv run python -m experiments.cli export-metrics
     uv run python -m experiments.cli report
     uv run python -m experiments.cli compare --results-dir ... --results-dir ...
@@ -144,23 +146,29 @@ def _resolve_deployment(args) -> str:
     return target
 
 
-def _default_out_dir(args, deployment: str) -> Path:
+def _default_out_dir(args, deployment: str, language: str | None = None) -> Path:
     safe_deployment = deployment.replace("/", "_")
-    return Path(__file__).parent / "results" / f"{args.configuration}__{safe_deployment}"
+    name = f"{args.configuration}__{safe_deployment}"
+    if language:
+        name += f"__{language}"
+    return Path(__file__).parent / "results" / name
 
 
-def cmd_run(args, mode: str) -> None:
+def cmd_run(args, mode: str, language: str | None = None) -> None:
     from experiments.run_meta import build_run_meta, finalize_run_meta, read_ml_env, write_run_meta
 
     deployment = _resolve_deployment(args)
-    out_dir = args.out_dir or _default_out_dir(args, deployment)
+    out_dir = args.out_dir or _default_out_dir(args, deployment, language)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ideas = load_dataset(args.dataset)
-    tasks = build_plan(ideas, "main" if mode == "pilot" else mode)
+    plan_mode = "main" if mode == "pilot" else mode
+    tasks = build_plan(ideas, plan_mode, language=language or "en")
     if mode == "pilot":
         tasks = tasks[: args.pilot_n]
         print(f"[pilot] running {len(tasks)} ideas: {', '.join(t.idea.id for t in tasks)}")
+    if mode == "language_comparison":
+        print(f"[language-comparison] running {len(tasks)} variance_subset ideas at language={language!r}")
 
     run_meta = build_run_meta(
         run_id=f"{args.configuration}__{deployment}__{mode}__{int(time.time())}",
@@ -173,6 +181,7 @@ def cmd_run(args, mode: str) -> None:
         ml_env=read_ml_env(args.ml_env_file),
         azure_resource_group=args.azure_resource_group,
         azure_account_name=args.azure_account_name,
+        language=language,
     )
     write_run_meta(run_meta, out_dir)
     for w in run_meta.meta_warnings:
@@ -338,9 +347,13 @@ async def _run_min_length_probe(args) -> None:
 
 
 def cmd_quality_sample(args) -> None:
+    from experiments.common import BLOCK_NAMES
     from experiments.quality_sample import build_quality_sample_md
 
-    md = build_quality_sample_md([Path(d) for d in args.results_dirs], args.idea_ids, run_index=args.run_index)
+    blocks = tuple(args.blocks) if args.blocks else BLOCK_NAMES
+    md = build_quality_sample_md(
+        [Path(d) for d in args.results_dirs], args.idea_ids, run_index=args.run_index, blocks=blocks
+    )
     args.out.write_text(md, encoding="utf-8")
     print(f"[quality_sample] wrote {args.out}")
 
@@ -361,6 +374,16 @@ def main() -> None:
     p_variance = sub.add_parser("variance", help="Run the 10 variance_subset ideas 4 more times each")
     _common_args(p_variance)
     p_variance.set_defaults(func=lambda a: cmd_run(a, "variance"))
+
+    p_language = sub.add_parser(
+        "language-comparison",
+        help="Run the 10 variance_subset ideas once each at a given --language "
+             "(part F of the data-quality-fixes brief). Run twice, once per "
+             "language, into results/{configuration}__{deployment}__{language}/.",
+    )
+    _common_args(p_language)
+    p_language.add_argument("--language", required=True, choices=["uk", "en"])
+    p_language.set_defaults(func=lambda a: cmd_run(a, "language_comparison", language=a.language))
 
     p_export = sub.add_parser("export-metrics", help="Pull token/latency/retry metrics from Langfuse into metrics.csv")
     _common_args(p_export)
@@ -390,6 +413,11 @@ def main() -> None:
     p_quality.add_argument("--results-dir", action="append", required=True, dest="results_dirs")
     p_quality.add_argument("--idea-id", action="append", required=True, dest="idea_ids")
     p_quality.add_argument("--run-index", type=int, default=0)
+    p_quality.add_argument(
+        "--block", action="append", dest="blocks", default=None,
+        help="Restrict to specific blocks (repeatable); default is all 8. "
+             "E.g. --block architecture --block hypotheses for language_quality_sample.md (part F).",
+    )
     p_quality.add_argument("--out", type=Path, default=Path(__file__).parent / "quality_sample.md")
     p_quality.set_defaults(func=cmd_quality_sample)
 

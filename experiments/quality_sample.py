@@ -18,7 +18,8 @@ def _model_label(results_dir: Path) -> str:
 
 
 def build_quality_sample_md(
-    results_dirs: list[Path], idea_ids: list[str], run_index: int = 0
+    results_dirs: list[Path], idea_ids: list[str], run_index: int = 0,
+    blocks: tuple[str, ...] = BLOCK_NAMES,
 ) -> str:
     per_dir_records = {
         d: {r.idea_id: r for r in load_existing_results(d / "runs.jsonl").values() if r.run_index == run_index}
@@ -43,7 +44,7 @@ def build_quality_sample_md(
             lines.append(f"> {any_record.expected_pattern} / {any_record.detail_level} / "
                          f"{any_record.market_type} / {any_record.industry}")
 
-        for block in BLOCK_NAMES:
+        for block in blocks:
             lines.append("")
             lines.append(f"### {idea_id} — {block}")
             for results_dir in results_dirs:

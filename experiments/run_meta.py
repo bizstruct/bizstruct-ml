@@ -49,6 +49,11 @@ class RunMeta(BaseModel):
     started_at: str
     finished_at: str | None = None
     mode: str
+    # Fixed condition for mode="language_comparison" runs (part F) — the
+    # generation language ("uk"/"en") every task in this run was submitted
+    # with. None for every other mode (language wasn't a controlled
+    # variable before part E).
+    language: str | None = None
     meta_warnings: list[str] = Field(default_factory=list)
 
 
@@ -166,6 +171,7 @@ def build_run_meta(
     azure_resource_group: str | None,
     azure_account_name: str | None,
     docker_name_prefix: str = "bizstruct_ml",
+    language: str | None = None,
 ) -> RunMeta:
     warnings: list[str] = []
 
@@ -221,6 +227,7 @@ def build_run_meta(
         started_at=datetime.now(timezone.utc).isoformat(),
         finished_at=None,
         mode=mode,
+        language=language,
         meta_warnings=warnings,
     )
 

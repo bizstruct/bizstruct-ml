@@ -67,14 +67,15 @@ class Idea(BaseModel):
 
 
 class RunTask(BaseModel):
-    """One (idea, run_index) unit of work — what the runner schedules."""
+    """One (idea, run_index, language) unit of work — what the runner schedules."""
 
     idea: Idea
     run_index: int  # 0 for the single main-coverage run, 1-4 for variance reruns
+    language: str = "en"  # generation language ("uk"/"en") — part E's per-project parameter
 
     @property
-    def key(self) -> tuple[str, int]:
-        return (self.idea.id, self.run_index)
+    def key(self) -> tuple[str, int, str]:
+        return (self.idea.id, self.run_index, self.language)
 
 
 class RunRecord(BaseModel):
@@ -82,6 +83,7 @@ class RunRecord(BaseModel):
 
     idea_id: str
     run_index: int
+    language: str = "en"
     project_id: str | None = None
     started_at: str
     finished_at: str | None = None
@@ -115,27 +117,33 @@ def load_dataset(path: Path) -> list[Idea]:
     return ideas
 
 
-def build_plan(ideas: list[Idea], mode: str) -> list[RunTask]:
+def build_plan(ideas: list[Idea], mode: str, language: str = "en") -> list[RunTask]:
     """mode: 'main' -> one run per idea (run_index=0) for all 100.
     'variance' -> 4 extra reruns (run_index 1-4) for the 10 variance_subset ideas.
-    'pilot' -> handled by the caller (it's just build_plan('main', ...)[:n])."""
+    'pilot' -> handled by the caller (it's just build_plan('main', ...)[:n]).
+    'language_comparison' -> one run (run_index=0) for each of the 10
+    variance_subset ideas, at the given `language` — the CLI runs this once
+    per language ('uk' then 'en') into separate results directories (part F
+    of the data-quality-fixes brief)."""
     if mode in ("main", "pilot"):
-        return [RunTask(idea=i, run_index=0) for i in ideas]
+        return [RunTask(idea=i, run_index=0, language=language) for i in ideas]
     if mode == "variance":
         tasks = []
         for i in ideas:
             if i.variance_subset:
-                tasks.extend(RunTask(idea=i, run_index=r) for r in range(1, 5))
+                tasks.extend(RunTask(idea=i, run_index=r, language=language) for r in range(1, 5))
         return tasks
+    if mode == "language_comparison":
+        return [RunTask(idea=i, run_index=0, language=language) for i in ideas if i.variance_subset]
     raise ValueError(f"Unknown mode: {mode}")
 
 
-def load_existing_results(runs_path: Path) -> dict[tuple[str, int], RunRecord]:
-    """Read runs.jsonl and return {(idea_id, run_index): RunRecord} for
-    every row already resolved to a terminal status — used to skip
+def load_existing_results(runs_path: Path) -> dict[tuple[str, int, str], RunRecord]:
+    """Read runs.jsonl and return {(idea_id, run_index, language): RunRecord}
+    for every row already resolved to a terminal status — used to skip
     already-done work on restart. Corrupt trailing lines (process killed
     mid-write) are skipped with a warning, not fatal."""
-    results: dict[tuple[str, int], RunRecord] = {}
+    results: dict[tuple[str, int, str], RunRecord] = {}
     if not runs_path.exists():
         return results
 
@@ -149,7 +157,7 @@ def load_existing_results(runs_path: Path) -> dict[tuple[str, int], RunRecord]:
             except Exception as e:  # noqa: BLE001 - genuinely tolerate any bad line
                 print(f"[warn] runs.jsonl:{line_no}: skipping unparseable line ({e})")
                 continue
-            results[(record.idea_id, record.run_index)] = record
+            results[(record.idea_id, record.run_index, record.language)] = record
     return results
 
 

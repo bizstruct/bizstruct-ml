@@ -32,11 +32,12 @@ async def run_one(
     title = f"[experiment] {task.idea.id} run{task.run_index}"
 
     try:
-        project_id = await client.create_project(task.idea.text, title)
+        project_id = await client.create_project(task.idea.text, title, language=task.language)
     except Exception as e:  # noqa: BLE001 - a failed *launch* is still a recorded result, not a crash
         return RunRecord(
             idea_id=task.idea.id,
             run_index=task.run_index,
+            language=task.language,
             project_id=None,
             started_at=started_at,
             finished_at=utcnow_iso(),
@@ -87,6 +88,7 @@ async def run_one(
     return RunRecord(
         idea_id=task.idea.id,
         run_index=task.run_index,
+        language=task.language,
         project_id=project_id,
         started_at=started_at,
         finished_at=utcnow_iso(),
