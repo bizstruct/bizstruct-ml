@@ -73,6 +73,48 @@ def test_short_field_below_letter_threshold_skips_language_check():
     assert "language_mismatch" not in _kinds(violations)
 
 
+def test_embedded_brand_name_and_acronyms_excluded_from_ratio():
+    # Real false positive from the language-comparison follow-up: a
+    # genuinely Ukrainian sentence measured 49% Cyrillic and tripped the
+    # flat 55% threshold because every Latin word in it is a capitalized
+    # acronym or brand name (ACV, SaaS, Insight, Governance, Lab), not
+    # actual English content. See scripts/calibrate_language_threshold.py.
+    data = {"summary": "ACV річного ретейнера та SaaS-ліцензії Insight Governance Lab"}
+    violations = validate_block_text(_Block, data, "uk")
+    assert "language_mismatch" not in _kinds(violations)
+
+
+def test_short_lowercase_unit_abbreviations_excluded_from_ratio():
+    data = {"items": [{"rationale": "Витрати на обслуговування становлять близько 3 kg на рік для типового клієнта"}]}
+    violations = validate_block_text(_Block, data, "uk")
+    assert "language_mismatch" not in _kinds(violations)
+
+
+def test_short_field_uses_looser_threshold_than_long_field():
+    # A short label mostly in the wrong script still trips the (looser)
+    # short-field threshold — neutral-token exclusion narrows false
+    # positives, it doesn't disable the check.
+    data = {"items": [{"rationale": "Value proposition here"}]}  # < 20 letters, no neutral tokens
+    violations = validate_block_text(_Block, data, "uk")
+    assert any(v.kind == "language_mismatch" for v in violations)
+
+
+def test_long_field_still_uses_standard_threshold_after_neutral_exclusion():
+    # A long field that's genuinely mostly in the wrong language must
+    # still be caught — neutral-token exclusion shouldn't dilute a real
+    # mismatch away by discounting a handful of capitalized words in it.
+    data = {
+        "items": [{
+            "rationale": (
+                "This entire rationale is written in English despite the project being "
+                "Ukrainian, with a Brand Name embedded in it too, well past the short-field cutoff."
+            )
+        }]
+    }
+    violations = validate_block_text(_Block, data, "uk")
+    assert any(v.kind == "language_mismatch" and v.field_path == "items[0].rationale" for v in violations)
+
+
 def test_unknown_language_code_skips_language_check():
     data = {"items": [{"rationale": "This entire field is written in English despite the project language."}]}
     violations = validate_block_text(_Block, data, "fr")

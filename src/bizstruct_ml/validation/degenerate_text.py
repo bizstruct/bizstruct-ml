@@ -29,6 +29,27 @@ the expected language isn't inferred from a field-name suffix anymore. The
 caller passes it in explicitly (`expected_language`, the same "uk"/"en"
 value used to build the prompt — see generators/base.py), and every text
 field in the block is checked against that one language uniformly.
+
+Language check, threshold follow-up: the live language-comparison run
+(part F) surfaced a real false positive — a genuinely Ukrainian
+`scenario.metrics.after.label` measured 49% Cyrillic and tripped the flat
+55% threshold, purely because it contained several capitalized
+Latin acronyms/brand-name words ("ACV", "SaaS", "Insight Governance
+Lab"). Two changes address this (see scripts/calibrate_language_threshold.py
+for the before/after counts they were tuned against): (1) "neutral"
+tokens — a capitalized word or a short (<=3 char) lowercase run in the
+*foreign* script relative to `expected_language` (proper nouns, acronyms,
+unit/currency abbreviations) — are excluded from both the numerator and
+denominator of the ratio, the same reasoning already applied wholesale to
+`title` fields, just applied per-token instead of per-field; (2) short
+fields (labels, metric values, names — under `_SHORT_FIELD_LETTER_THRESHOLD`
+letters after that exclusion) use a looser threshold than long-form prose,
+since a short field's ratio is noisier per character even after (1).
+Neither change touches disallowed_script/repeated_sequence/truncation, and
+neither discounts genuine wrong-language content: only capitalized or
+short-lowercase foreign-script tokens are neutral, so a real degenerate
+field (a whole sentence in the wrong language, ordinary-case words
+throughout) still measures the same ratio it always did.
 """
 
 from __future__ import annotations
@@ -54,9 +75,52 @@ from pydantic.fields import FieldInfo
 # not trip this; only fields substantially in the wrong script should.
 _UK_MIN_CYRILLIC_RATIO = 0.55
 _EN_MIN_LATIN_RATIO = 0.55
-# Below this many alphabetic characters, the ratio is too noisy to judge
-# (e.g. a 3-letter field) — skip the language check entirely.
+# Short fields (labels, metric values, names) get a looser threshold than
+# long-form prose — calibrated against the language-comparison follow-up
+# brief's part A: even after neutral-token exclusion (see
+# _neutral_token_spans below), a short field's ratio is noisier per
+# character, so the same 0.55 bar produces more false positives on it
+# than on a paragraph.
+_UK_MIN_CYRILLIC_RATIO_SHORT = 0.30
+_EN_MIN_LATIN_RATIO_SHORT = 0.30
+# Below this many (post-exclusion) alphabetic characters, the ratio is too
+# noisy to judge (e.g. a 3-letter field) — skip the language check
+# entirely.
 _MIN_LETTERS_FOR_LANGUAGE_CHECK = 8
+# At or above this many (post-exclusion) alphabetic characters, a field is
+# "long" and gets the standard threshold; below it, the short-field
+# threshold applies.
+_SHORT_FIELD_LETTER_THRESHOLD = 20
+
+# A "neutral" token — a brand name, product name, acronym, or unit/currency
+# abbreviation borrowed from the other script — doesn't count as evidence
+# either way, so it's excluded from both the numerator and denominator of
+# the ratio. Calibration against experiments/results/ found the single
+# real false positive so far this way: a genuinely Ukrainian sentence,
+# `metrics.after.label` = "ACV річного ретейнера та SaaS-ліцензії Insight
+# Governance Lab", measured 49% Cyrillic and tripped the (pre-fix) 55%
+# threshold — every one of its Latin words is a capitalized acronym or
+# brand name (ACV, SaaS, Insight, Governance, Lab), the same pattern
+# already exempted wholesale on `title` fields (see
+# _LANGUAGE_CHECK_EXEMPT_FIELDS below), just embedded inside prose here
+# instead of being the whole field. A word in the "foreign" script (Latin
+# when uk is expected, Cyrillic when en is expected) is treated as neutral
+# if it's capitalized (proper noun / acronym / brand convention) or a
+# short (<=3 char) all-lowercase run (unit/measure-style: kg, hr, mo,
+# min). Neither is evidence the field is actually in the other language.
+_LATIN_WORD_RE = re.compile(r"[A-Za-z']+")
+_CYRILLIC_WORD_RE = re.compile(r"[Ѐ-ӿ']+")
+_NEUTRAL_TOKEN_MAX_LOWERCASE_LEN = 3
+
+
+def _neutral_token_spans(text: str, expected_language: str) -> set[int]:
+    foreign_word_re = _LATIN_WORD_RE if expected_language == "uk" else _CYRILLIC_WORD_RE
+    spans: set[int] = set()
+    for m in foreign_word_re.finditer(text):
+        word = m.group(0)
+        if word[:1].isupper() or (len(word) <= _NEUTRAL_TOKEN_MAX_LOWERCASE_LEN and word.islower()):
+            spans.update(range(m.start(), m.end()))
+    return spans
 
 # `title` fields consistently mix a native descriptor with an English
 # brand-style product name by design across this dataset (e.g. "Інституційна
@@ -133,14 +197,19 @@ def _check_language(field_path: str, text: str, expected_language: str) -> TextV
     if expected_language not in ("uk", "en"):
         return None  # unknown language code — nothing to check against, not our call to guess
 
-    letters = [c for c in text if c.isalpha()]
+    neutral_spans = _neutral_token_spans(text, expected_language)
+    letters = [c for i, c in enumerate(text) if c.isalpha() and i not in neutral_spans]
     if len(letters) < _MIN_LETTERS_FOR_LANGUAGE_CHECK:
         return None
 
     cyrillic = sum(1 for c in letters if "Ѐ" <= c <= "ӿ")
     latin = sum(1 for c in letters if "a" <= c.lower() <= "z")
     ratio = (cyrillic if expected_language == "uk" else latin) / len(letters)
-    threshold = _UK_MIN_CYRILLIC_RATIO if expected_language == "uk" else _EN_MIN_LATIN_RATIO
+
+    if len(letters) < _SHORT_FIELD_LETTER_THRESHOLD:
+        threshold = _UK_MIN_CYRILLIC_RATIO_SHORT if expected_language == "uk" else _EN_MIN_LATIN_RATIO_SHORT
+    else:
+        threshold = _UK_MIN_CYRILLIC_RATIO if expected_language == "uk" else _EN_MIN_LATIN_RATIO
 
     if ratio < threshold:
         return TextViolation(
