@@ -110,7 +110,7 @@ class BaseGenerator:
             # otherwise there's no way to measure how often this happens
             # across a real experimental run.
             with tracing.span("validate_text") as vt_span:
-                violations = validate_block_text(self.schema, data, project.translation_key or "en")
+                violations = validate_block_text(self.schema, data, project.language or "en")
                 vt_span.update(
                     metadata={
                         "violations": [

@@ -22,7 +22,7 @@ _PATTERNS = """\
 
 
 def build_messages(project: ProjectState) -> list[dict]:
-    lang = project.translation_key or "en"
+    lang = project.language or "en"
     user = f"""Project: {project.title}
 Idea: {project.idea}{context_section(project)}
 
