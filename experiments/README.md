@@ -287,3 +287,56 @@ in `run_meta.json`/`runs.jsonl` per results directory, so joining Langfuse
 data back to a `(configuration, run_id)` by `project_id` works fine without
 either being present in Langfuse itself — just not as a native Langfuse
 filter/tag.
+
+## Rubric calibration (manual evaluation)
+
+`experiments/calibration/` (a separate package, never imported by anything
+under `src/` — see the Dockerfile, which only `COPY`s `src/`, so none of
+this reaches the worker's image) prepares and processes a small manual
+calibration of the quality rubric before the real pipeline-vs-agentic
+comparison: 5 projects, 2 deliberately degraded on a known criterion, 15
+blind human evaluations (3 independent judges/rounds × 5 files), checking
+whether the rubric's scores actually move where a defect was introduced.
+This is offline preparation/analysis tooling — the scoring itself is done
+by a person pasting each file into a judge model's own web chat, not via
+this repo's API client.
+
+```bash
+# A — generate the 5-project set (pipeline, English, into a versioned
+# calibration/sets/<version>/ directory — bump --version for a fresh set
+# rather than overwriting one you might still want to compare against)
+uv run python -m experiments.cli calibration-set --version v1 --deployment gpt-5.6-terra
+
+# B — export project-A.md..project-E.md (self-contained, no project/model
+# identifiers) + the separate key/token-count files under sets/v1/keys/
+uv run python -m experiments.cli calibration-export --version v1
+
+# C — degrade 2 of the 5 by hand: export one project to an editable JSON,
+# edit it in your own editor (this step is NOT automated — see the
+# module docstring in calibration/degrade.py for why), then import it
+# back. Import re-validates every block against bizstruct_domain's
+# schema and checks every list's length is unchanged; on failure nothing
+# is written, the prior degraded/ state is untouched.
+uv run python -m experiments.cli calibration-degrade --action export --idea-id idea-001 --out /tmp/idea-001.json
+#   ... edit /tmp/idea-001.json by hand ...
+uv run python -m experiments.cli calibration-degrade --action import --idea-id idea-001 --in /tmp/idea-001.json --criterion K1
+
+# re-run B after degrading — the export now uses the degraded overlay for
+# those 2 projects (still no marker of which ones, anywhere in the files)
+uv run python -m experiments.cli calibration-export --version v1
+
+# D — after the 15 manual judging sessions (each in a fresh chat):
+uv run python -m experiments.cli calibration-input --action template --out /tmp/scores_template.csv
+#   ... fill in the score/rationale columns from the judge's 15 responses ...
+uv run python -m experiments.cli calibration-input --action validate --in /tmp/scores_filled.csv --version v1
+uv run python -m experiments.cli calibration-report --version v1
+# -> calibration/sets/v1/calibration_report.md
+```
+
+`degraded/manifest.csv` (which idea_id was degraded, on which criterion)
+and `keys/key.csv` (file_id -> real idea_id) never appear inside
+`export/` — that directory alone is what's safe to hand to a judge.
+`calibration-report` reads the degraded marker from `degraded/manifest.csv`,
+never from the scores CSV, so a judge's rationale text mentioning it (it
+shouldn't, but nothing enforces that) can't influence the report's own
+labeling of which file was degraded.

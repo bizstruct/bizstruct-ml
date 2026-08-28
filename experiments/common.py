@@ -124,7 +124,10 @@ def build_plan(ideas: list[Idea], mode: str, language: str = "en") -> list[RunTa
     'language_comparison' -> one run (run_index=0) for each of the 10
     variance_subset ideas, at the given `language` — the CLI runs this once
     per language ('uk' then 'en') into separate results directories (part F
-    of the data-quality-fixes brief)."""
+    of the data-quality-fixes brief).
+    'calibration' -> the first 5 ideas in dataset.json's own order
+    (idea-001..idea-005), run_index=0, at the given language — the rubric-
+    calibration set (see experiments/calibration/)."""
     if mode in ("main", "pilot"):
         return [RunTask(idea=i, run_index=0, language=language) for i in ideas]
     if mode == "variance":
@@ -135,6 +138,8 @@ def build_plan(ideas: list[Idea], mode: str, language: str = "en") -> list[RunTa
         return tasks
     if mode == "language_comparison":
         return [RunTask(idea=i, run_index=0, language=language) for i in ideas if i.variance_subset]
+    if mode == "calibration":
+        return [RunTask(idea=i, run_index=0, language=language) for i in ideas[:5]]
     raise ValueError(f"Unknown mode: {mode}")
 
 
