@@ -2,7 +2,7 @@
 import pytest
 from bizstruct_ml.schemas.blocks import (
     ModelsOptions,
-    CanvasData,
+    CanvasGenerated,
     EmpathyMap,
     Hypotheses,
     Pitch,
@@ -13,45 +13,48 @@ from bizstruct_ml.schemas.blocks import (
 
 
 MODELS_OPTIONS_EXAMPLE = {
-    "models": [
+    "options": [
         {
             "id": "00000000-0000-0000-0000-000000000001",
-            "name": "B2B SaaS · EcoSync",
-            "tagline": "Automate ESG reporting in minutes",
+            "title": "B2B SaaS · EcoSync",
+            "audience": "mid-market",
+            "value_proposition": "Automate ESG reporting in minutes",
             "description": "Monthly subscription giving mid-market companies automated ESG reporting. Reduces compliance costs by 80%.",
             "monetization": "subscription",
-            "target_segment": "mid-market",
             "key_metric": "MRR / NRR",
             "time_to_value": "30 minutes to first report",
             "score": 91,
+            "score_rationale": "High: directly automates the Empathy Map's top pain (manual reporting) with a proven SaaS pricing model.",
         },
         {
             "id": "00000000-0000-0000-0000-000000000002",
-            "name": "Marketplace · EcoSync",
-            "tagline": "Pay per report generated",
+            "title": "Marketplace · EcoSync",
+            "audience": "SMB",
+            "value_proposition": "Pay per report generated",
             "description": "Transaction fee per ESG report submitted. Scales with customer usage.",
             "monetization": "transaction_fee",
-            "target_segment": "SMB",
             "key_metric": "GMV / take rate",
             "time_to_value": "15 minutes to first report",
             "score": 72,
+            "score_rationale": "Moderate: lowers the entry barrier for SMBs but revenue is less predictable than subscription.",
         },
         {
             "id": "00000000-0000-0000-0000-000000000003",
-            "name": "Advisory · EcoSync",
-            "tagline": "Expert advisory plus platform access",
+            "title": "Advisory · EcoSync",
+            "audience": "enterprise",
+            "value_proposition": "Expert advisory plus platform access",
             "description": "Retainer for ESG strategy consulting combined with SaaS access.",
             "monetization": "retainer_plus_saas",
-            "target_segment": "enterprise",
             "key_metric": "ACV",
             "time_to_value": "2 weeks onboarding",
             "score": 65,
+            "score_rationale": "Lower: higher-touch sales cycle and smaller addressable market than the other two options.",
         },
     ],
     "selected_id": None,
 }
 
-CANVAS_DATA_EXAMPLE = {
+CANVAS_EXAMPLE = {
     "key_partners": [
         {"id": "00000000-0000-0000-0000-000000000010", "text": "ESG data providers", "is_ai_generated": True},
         {"id": "00000000-0000-0000-0000-000000000011", "text": "Regulatory bodies", "is_ai_generated": True},
@@ -90,225 +93,215 @@ CANVAS_DATA_EXAMPLE = {
     ],
 }
 
+def _empathy_item(i: int, text: str) -> dict:
+    return {"id": i, "text": text}
+
+
 EMPATHY_MAP_EXAMPLE = {
-    "uk": {
-        "says": [{"id": 1, "text": "Звітність займає 3 тижні"}, {"id": 2, "text": "Потрібен автоматизований процес"}],
-        "thinks": [{"id": 1, "text": "Штраф за порушення вимог"}, {"id": 2, "text": "Конкуренти вже автоматизували"}],
-        "does": [{"id": 1, "text": "Збирає дані вручну в Excel"}, {"id": 2, "text": "Наймає зовнішніх консультантів"}],
-        "feels": [{"id": 1, "text": "Стрес перед дедлайнами"}, {"id": 2, "text": "Невпевненість у правильності даних"}],
-        "pains": [{"id": 1, "text": "80 годин/квартал на збір даних"}, {"id": 2, "text": "Помилки у звітах = ризик штрафів"}],
-        "gains": [{"id": 1, "text": "Автоматичний збір даних"}, {"id": 2, "text": "Відповідність всім стандартам GRI/TCFD"}],
-    },
-    "en": {
-        "says": [{"id": 1, "text": "Reporting takes 3 weeks"}, {"id": 2, "text": "Need an automated process"}],
-        "thinks": [{"id": 1, "text": "Fine for non-compliance"}, {"id": 2, "text": "Competitors already automated"}],
-        "does": [{"id": 1, "text": "Collects data manually in Excel"}, {"id": 2, "text": "Hires external consultants"}],
-        "feels": [{"id": 1, "text": "Stressed before deadlines"}, {"id": 2, "text": "Uncertain about data accuracy"}],
-        "pains": [{"id": 1, "text": "80 hours/quarter on data collection"}, {"id": 2, "text": "Errors in reports = fine risk"}],
-        "gains": [{"id": 1, "text": "Automated data collection"}, {"id": 2, "text": "Compliance with GRI/TCFD standards"}],
-    },
+    "says": [
+        _empathy_item(1, "Reporting takes 3 weeks"),
+        _empathy_item(2, "Need an automated process"),
+        _empathy_item(3, "We're falling behind competitors"),
+    ],
+    "thinks": [
+        _empathy_item(1, "Fine for non-compliance"),
+        _empathy_item(2, "Competitors already automated"),
+        _empathy_item(3, "This should be simpler"),
+    ],
+    "does": [
+        _empathy_item(1, "Collects data manually in Excel"),
+        _empathy_item(2, "Hires external consultants"),
+        _empathy_item(3, "Double-checks the report repeatedly"),
+    ],
+    "feels": [
+        _empathy_item(1, "Stressed before deadlines"),
+        _empathy_item(2, "Uncertain about data accuracy"),
+        _empathy_item(3, "Fatigued by repetitive work"),
+    ],
+    "pains": [
+        _empathy_item(1, "80 hours/quarter on data collection"),
+        _empathy_item(2, "Errors in reports = fine risk"),
+        _empathy_item(3, "Data scattered across systems"),
+    ],
+    "gains": [
+        _empathy_item(1, "Automated data collection"),
+        _empathy_item(2, "Compliance with GRI/TCFD standards"),
+        _empathy_item(3, "More time for analysis, not collection"),
+    ],
 }
 
 HYPOTHESES_EXAMPLE = {
     "hypotheses": [
-        {"id": "H1.1", "text": "60% of CFOs spend >40h/quarter on ESG reporting", "category": "Desirability", "quadrant": "q1"},
-        {"id": "H1.2", "text": "80% would switch to automated solution", "category": "Desirability", "quadrant": "q1"},
-        {"id": "H2.1", "text": "Mid-market firms pay €2000/month for ESG tools", "category": "Viability", "quadrant": "q2"},
-        {"id": "H3.1", "text": "AI can achieve 95% accuracy on standard ESG frameworks", "category": "Feasibility", "quadrant": "q3"},
-        {"id": "H3.2", "text": "Integration with ERP systems takes <2 weeks", "category": "Feasibility", "quadrant": "q3"},
+        {"id": "H1.1", "text": "60% of CFOs spend >40h/quarter on ESG reporting", "category": "desirability", "quadrant": "q1"},
+        {"id": "H1.2", "text": "80% would switch to an automated solution", "category": "desirability", "quadrant": "q1"},
+        {"id": "H2.1", "text": "Mid-market firms pay €2000/month for ESG tools", "category": "viability", "quadrant": "q2"},
+        {"id": "H3.1", "text": "AI can achieve 95% accuracy on standard ESG frameworks", "category": "feasibility", "quadrant": "q3"},
+        {"id": "H3.2", "text": "Integration with ERP systems takes <2 weeks", "category": "feasibility", "quadrant": "q3"},
     ]
 }
 
+def _pitch_slide(slide_type: str, headline: str, content: str) -> dict:
+    return {"type": slide_type, "headline": headline, "content": content}
+
+
 PITCH_EXAMPLE = {
-    "uk": {
-        "investor": [
-            {"type": "hook", "headline": "ESG-звітність коштує €240k/рік та 3 тижні часу", "content": "Кожна публічна компанія зобов'язана звітувати. Жодна не хоче витрачати на це час."},
-            {"type": "problem", "headline": "Компанії тонуть у Excel і консультантах", "content": "80 годин на квартал, 15% помилок у звітах, €50k+ на зовнішніх консультантів."},
-            {"type": "solution", "headline": "EcoSync: автоматизація ESG за 30 хвилин", "content": "AI збирає, аналізує і генерує звіти автоматично. Підтримка GRI, TCFD, CSRD."},
-            {"type": "traction", "headline": "Потенційно 500+ компаній у pipeline", "content": "Приклад: перші 10 клієнтів можуть заощадити €1.2M сукупно."},
-            {"type": "ask", "headline": "Залучаємо €2M seed раунд", "content": "На розвиток продукту та залучення перших 50 enterprise клієнтів."},
-        ],
-        "client": [
-            {"type": "opening", "headline": "Ваш ESG-звіт готовий. За 30 хвилин.", "content": "Не за 3 тижні, не за €50k. За 30 хвилин."},
-            {"type": "empathy", "headline": "Ми знаємо: збір даних — це пекло", "content": "80 годин на квартал, неузгодженість між відділами, страх помилок."},
-            {"type": "transformation", "headline": "З EcoSync звітність стає рутиною, не кризою", "content": "Автоматичний збір, валідація, генерація звіту в один клік."},
-            {"type": "social_proof", "headline": "Приклад: CFO заощадив 70 годин за квартал", "content": "Потенційна економія €40k/рік для компаній розміром 500+ людей."},
-            {"type": "invitation", "headline": "Спробуйте безкоштовно 30 днів", "content": "Підключіть ваші дані — перший звіт готовий сьогодні."},
-        ],
-    },
-    "en": {
-        "investor": [
-            {"type": "hook", "headline": "ESG reporting costs €240k/year and 3 weeks", "content": "Every public company must report. None want to waste time on it."},
-            {"type": "problem", "headline": "Companies drown in Excel and consultants", "content": "80 hours per quarter, 15% error rate, €50k+ on external consultants."},
-            {"type": "solution", "headline": "EcoSync: ESG automation in 30 minutes", "content": "AI collects, analyzes, and generates reports automatically. Supports GRI, TCFD, CSRD."},
-            {"type": "traction", "headline": "Potentially 500+ companies in pipeline", "content": "Example: first 10 clients could save €1.2M collectively."},
-            {"type": "ask", "headline": "Raising €2M seed round", "content": "For product development and acquiring first 50 enterprise clients."},
-        ],
-        "client": [
-            {"type": "opening", "headline": "Your ESG report is ready. In 30 minutes.", "content": "Not 3 weeks, not €50k. In 30 minutes."},
-            {"type": "empathy", "headline": "We know: data collection is hell", "content": "80 hours per quarter, cross-department misalignment, fear of errors."},
-            {"type": "transformation", "headline": "With EcoSync reporting becomes routine, not crisis", "content": "Automatic collection, validation, report generation in one click."},
-            {"type": "social_proof", "headline": "Example: CFO saved 70 hours per quarter", "content": "Potential savings of €40k/year for companies with 500+ employees."},
-            {"type": "invitation", "headline": "Try free for 30 days", "content": "Connect your data — first report ready today."},
-        ],
-    },
+    "investor": [
+        _pitch_slide("hook", "ESG reporting costs €240k/year and 3 weeks",
+                     "Every public company must report. None want to waste time on it."),
+        _pitch_slide("problem", "Companies drown in Excel and consultants",
+                     "80 hours per quarter, 15% error rate, €50k+ on external consultants."),
+        _pitch_slide("solution", "EcoSync: ESG automation in 30 minutes",
+                     "AI collects, analyzes, and generates reports automatically. Supports GRI, TCFD, CSRD."),
+        _pitch_slide("traction", "Potentially 500+ companies in pipeline",
+                     "Example: first 10 clients could save €1.2M collectively."),
+        _pitch_slide("ask", "Raising €2M seed round",
+                     "For product development and acquiring first 50 enterprise clients."),
+    ],
+    "customer": [
+        _pitch_slide("opening", "Your ESG report is ready. In 30 minutes.",
+                     "Not 3 weeks, not €50k. In 30 minutes."),
+        _pitch_slide("empathy", "We know: data collection is hell",
+                     "80 hours per quarter, cross-department misalignment, fear of errors."),
+        _pitch_slide("transformation", "With EcoSync reporting becomes routine, not crisis",
+                     "Automatic collection, validation, report generation in one click."),
+        _pitch_slide("social_proof", "Example: CFO saved 70 hours per quarter",
+                     "Potential savings of €40k/year for companies with 500+ employees."),
+        _pitch_slide("invitation", "Try free for 30 days",
+                     "Connect your data — first report ready today."),
+    ],
 }
 
 SCENARIO_EXAMPLE = {
-    "uk": {
-        "persona": {
-            "name": "Олена Коваль",
-            "initials": "ОК",
-            "role": "CFO, виробнича компанія",
-            "pain_point": "Щоквартальна підготовка ESG-звіту займає 3 тижні і ламає всі плани",
-        },
-        "timeline": [
-            {"icon_key": "calendar", "label_key": "scenario.step.context", "text": "Кінець кварталу — дедлайн ESG звіту через 3 тижні", "highlight": False},
-            {"icon_key": "target", "label_key": "scenario.step.goal", "text": "Зібрати дані від 12 відділів та підготувати звіт", "highlight": False},
-            {"icon_key": "zap", "label_key": "scenario.step.action", "text": "Олена підключає EcoSync до ERP та Excel-файлів", "highlight": True},
-            {"icon_key": "check-circle", "label_key": "scenario.step.result", "text": "За 45 хвилин система зібрала та валідувала всі дані", "highlight": True},
-            {"icon_key": "trending-up", "label_key": "scenario.step.impact", "text": "Звіт готовий на 2 тижні раніше, команда зберегла 70 годин", "highlight": False},
-        ],
-        "metrics": {
-            "before": {"value": "3 тижні", "label": "Час на підготовку ESG звіту"},
-            "after": {"value": "45 хвилин", "label": "Час з EcoSync"},
-        },
+    "persona": {
+        "name": "Elena Koval",
+        "role": "CFO, manufacturing company",
+        "pain_point": "Quarterly ESG report preparation takes 3 weeks and disrupts all plans",
     },
-    "en": {
-        "persona": {
-            "name": "Elena Koval",
-            "initials": "EK",
-            "role": "CFO, manufacturing company",
-            "pain_point": "Quarterly ESG report preparation takes 3 weeks and disrupts all plans",
-        },
-        "timeline": [
-            {"icon_key": "calendar", "label_key": "scenario.step.context", "text": "End of quarter — ESG report deadline in 3 weeks", "highlight": False},
-            {"icon_key": "target", "label_key": "scenario.step.goal", "text": "Collect data from 12 departments and prepare the report", "highlight": False},
-            {"icon_key": "zap", "label_key": "scenario.step.action", "text": "Elena connects EcoSync to ERP and Excel files", "highlight": True},
-            {"icon_key": "check-circle", "label_key": "scenario.step.result", "text": "In 45 minutes system collected and validated all data", "highlight": True},
-            {"icon_key": "trending-up", "label_key": "scenario.step.impact", "text": "Report ready 2 weeks early, team saved 70 hours", "highlight": False},
-        ],
-        "metrics": {
-            "before": {"value": "3 weeks", "label": "Time to prepare ESG report"},
-            "after": {"value": "45 minutes", "label": "Time with EcoSync"},
-        },
+    "timeline": [
+        {"step_type": "context", "text": "End of quarter — ESG report deadline in 3 weeks"},
+        {"step_type": "goal", "text": "Collect data from 12 departments and prepare the report"},
+        {"step_type": "action", "text": "Elena connects EcoSync to ERP and Excel files"},
+        {"step_type": "result", "text": "In 45 minutes system collected and validated all data"},
+        {"step_type": "impact", "text": "Report ready 2 weeks early, team saved 70 hours"},
+    ],
+    "metrics": {
+        "before": {"value": "3 weeks", "label": "Time to prepare ESG report"},
+        "after": {"value": "45 minutes", "label": "Time with EcoSync"},
     },
 }
 
+def _errc_move(action: str, section: str, target: str, new_text: str | None = None) -> dict:
+    move = {
+        "action": action,
+        "target_section": section,
+        "target": target,
+        "rationale": "Rationale for this move, long enough to pass validation.",
+    }
+    if action in ("reduce", "raise"):
+        move["new_text"] = new_text or "Replacement text for the existing card, long enough to pass validation"
+    return move
+
+
 WHAT_IF_EXAMPLE = {
-    "scenarios": [
+    "alternatives": [
         {
             "id": "00000000-0000-0000-0000-000000000100",
-            "vector": "Financial",
-            "color": "indigo",
-            "icon": "coins",
-            "title": "What if we offered outcome-based pricing?",
-            "description": "Charge only when the ESG report passes regulatory review. Aligns incentives with customer success.",
-            "value": "Zero risk for the customer — pay only for results",
-            "revenue": "Potential 2x revenue per client at €4000/report",
-            "status": "applied",
+            "title": "Outcome-based pricing",
+            "premise": "Charge only when the ESG report passes regulatory review.",
+            "moves": [
+                _errc_move("eliminate", "revenue_streams", "Fixed monthly subscription fee"),
+                _errc_move("reduce", "cost_structure", "Upfront onboarding cost"),
+                _errc_move("raise", "value_propositions", "Regulatory-review guarantee"),
+            ],
+            "expected_impact": "Potential 2x revenue per client.",
+            "status": "draft",
         },
         {
             "id": "00000000-0000-0000-0000-000000000101",
-            "vector": "Technical",
-            "color": "teal",
-            "icon": "cpu",
-            "title": "What if we built real-time ESG monitoring?",
-            "description": "Continuous data collection instead of quarterly batch processing. Enables proactive compliance.",
-            "value": "Always-current ESG score, instant alerts on deviations",
-            "revenue": "Premium tier at €8000/month, 30% higher retention",
+            "title": "Real-time ESG monitoring",
+            "premise": "Continuous data collection instead of quarterly batch processing.",
+            "moves": [
+                _errc_move("eliminate", "key_activities", "Quarterly manual data review"),
+                _errc_move("raise", "key_resources", "Real-time data pipeline"),
+                _errc_move("create", "revenue_streams", "Premium real-time monitoring tier"),
+            ],
+            "expected_impact": "Premium tier with higher retention.",
             "status": "draft",
         },
         {
             "id": "00000000-0000-0000-0000-000000000102",
-            "vector": "Emotional",
-            "color": "slate",
-            "icon": "heartHandshake",
-            "title": "What if we made ESG a competitive advantage story?",
-            "description": "Reframe ESG from compliance burden to brand differentiator. Help customers market their scores.",
-            "value": "Pride in sustainability leadership, not just compliance",
-            "revenue": "Brand partnership revenue stream, €500k/year potential",
+            "title": "Sustainability leadership brand",
+            "premise": "Reframe ESG from compliance burden to brand differentiator.",
+            "moves": [
+                _errc_move("reduce", "customer_relationships", "Purely transactional support"),
+                _errc_move("raise", "channels", "Public sustainability showcase"),
+                _errc_move("create", "revenue_streams", "Brand partnership revenue stream"),
+            ],
+            "expected_impact": "New brand partnership revenue stream.",
             "status": "draft",
         },
     ]
 }
 
 ARCHITECTURE_EXAMPLE = {
-    "uk": {
-        "epicenter": {
-            "value": "Customer-driven",
-            "description": "Модель будується навколо болю клієнта — витрат часу на ESG звітність. Кожна функція вирішує конкретну проблему CFO.",
-            "status": "determined",
-        },
-        "pattern": {
-            "value": "FREE",
-            "subtype": "Freemium",
-            "description": "Безкоштовний план для знайомства з продуктом, платний — для повного автоматизованого звітування.",
-            "status": "system_selection",
-        },
-    },
-    "en": {
-        "epicenter": {
-            "value": "Customer-driven",
-            "description": "The model is built around the customer's pain — time spent on ESG reporting. Every feature solves a specific CFO problem.",
-            "status": "determined",
-        },
-        "pattern": {
-            "value": "FREE",
-            "subtype": "Freemium",
-            "description": "Free plan for product discovery, paid plan for full automated reporting.",
-            "status": "system_selection",
-        },
-    },
+    "epicenter": "customer_driven",
+    "epicenter_rationale": "The model is built around the customer's pain — time spent on ESG reporting. Every feature solves a specific CFO problem.",
+    "pattern": "free",
+    "pattern_subtype": "freemium",
+    "pattern_rationale": "Free plan for product discovery, paid plan for full automated reporting without limits.",
 }
 
 
 def test_models_options_schema():
     result = ModelsOptions.model_validate(MODELS_OPTIONS_EXAMPLE)
-    assert len(result.models) == 3
+    assert len(result.options) == 3
     assert result.selected_id is None
 
 
-def test_canvas_data_schema():
-    result = CanvasData.model_validate(CANVAS_DATA_EXAMPLE)
+def test_canvas_schema():
+    result = CanvasGenerated.model_validate(CANVAS_EXAMPLE)
     assert len(result.key_partners) == 2
     assert result.key_partners[0].is_ai_generated is True
 
 
 def test_empathy_map_schema():
     result = EmpathyMap.model_validate(EMPATHY_MAP_EXAMPLE)
-    assert len(result.uk.says) == 2
-    assert len(result.en.pains) == 2
+    assert len(result.says) == 3
+    assert len(result.pains) == 3
+    assert result.pains[0].text == "80 hours/quarter on data collection"
 
 
 def test_hypotheses_schema():
     result = Hypotheses.model_validate(HYPOTHESES_EXAMPLE)
     assert len(result.hypotheses) == 5
     categories = {h.category for h in result.hypotheses}
-    assert categories == {"Desirability", "Viability", "Feasibility"}
+    assert categories == {"desirability", "viability", "feasibility"}
 
 
 def test_pitch_schema():
     result = Pitch.model_validate(PITCH_EXAMPLE)
-    assert len(result.uk.investor) == 5
-    assert len(result.en.client) == 5
-    assert result.uk.investor[0].type == "hook"
+    assert len(result.investor) == 5
+    assert len(result.customer) == 5
+    assert result.investor[0].type == "hook"
+    assert result.customer[0].type == "opening"
 
 
 def test_scenario_schema():
     result = Scenario.model_validate(SCENARIO_EXAMPLE)
-    assert result.uk.persona.name == "Олена Коваль"
-    assert len(result.uk.timeline) == 5
+    assert result.persona.name == "Elena Koval"
+    assert len(result.timeline) == 5
+    assert result.timeline[0].step_type == "context"
 
 
 def test_what_if_schema():
     result = WhatIf.model_validate(WHAT_IF_EXAMPLE)
-    assert len(result.scenarios) == 3
-    assert result.scenarios[0].vector == "Financial"
-    assert result.scenarios[0].status == "applied"
+    assert len(result.alternatives) == 3
+    assert result.alternatives[0].title == "Outcome-based pricing"
+    assert result.alternatives[0].status == "draft"
 
 
 def test_architecture_schema():
     result = Architecture.model_validate(ARCHITECTURE_EXAMPLE)
-    assert result.uk.epicenter.status == "determined"
-    assert result.en.pattern.status == "system_selection"
+    assert result.epicenter.value == "customer_driven"
+    assert result.pattern.value == "free"
+    assert result.pattern_subtype.value == "freemium"

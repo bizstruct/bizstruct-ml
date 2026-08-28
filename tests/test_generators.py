@@ -5,62 +5,53 @@ from pydantic import ValidationError
 
 from bizstruct_ml.generators.base import (
     _postprocess_models_options,
-    _postprocess_canvas_data,
-    _postprocess_hypotheses,
+    _postprocess_canvas,
     _postprocess_what_if,
-    _postprocess_architecture,
-    _postprocess_pitch,
-    _postprocess_scenario,
 )
-from bizstruct_ml.schemas.blocks.models_options import ModelsOptions, BusinessModel
-from bizstruct_ml.schemas.blocks.canvas_data import CanvasData, CanvasItem
-from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses, Hypothesis
-from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
-from bizstruct_ml.schemas.blocks.architecture import Architecture, ArchLocale, Epicenter, Pattern
-from bizstruct_ml.schemas.blocks.pitch import Pitch, PitchLocale, InvestorSlide, ClientSlide
-from bizstruct_ml.schemas.blocks.scenario import Scenario, ScenarioLocale, Persona, TimelineStep, ScenarioMetrics, MetricValue
+from bizstruct_domain.blocks.models_options import ModelsOptions, BusinessModelOption
+from bizstruct_domain.blocks.canvas import CanvasGenerated, CanvasCard
+from bizstruct_domain.blocks.what_if import ERRCMove, WhatIfAlternative, WhatIfGenerated
+from bizstruct_domain.enums import CanvasSection, ERRCAction
 from uuid import uuid4
 
 
-def _make_model(monetization: str, score: int = 80) -> BusinessModel:
-    return BusinessModel(
+def _make_option(monetization: str, score: int = 80) -> BusinessModelOption:
+    return BusinessModelOption(
         id=uuid4(),
-        name=f"Model {monetization}",
-        tagline="tagline",
-        description="desc",
+        title=f"Model {monetization}",
+        audience="mid-market sustainability teams",
+        value_proposition="A value proposition long enough to satisfy the domain model's minimum length.",
+        description="A description long enough to satisfy the domain model's minimum length.",
         monetization=monetization,  # type: ignore[arg-type]
-        target_segment="mid-market",
         key_metric="MRR",
         time_to_value="30 min",
         score=score,
+        score_rationale="A rationale long enough to satisfy the domain model's minimum length.",
     )
 
 
 def test_models_options_order_guaranteed():
     # Input is in wrong order: retainer_plus_saas, subscription, transaction_fee
     data = ModelsOptions(
-        models=[
-            _make_model("retainer_plus_saas"),
-            _make_model("subscription"),
-            _make_model("transaction_fee"),
+        options=[
+            _make_option("retainer_plus_saas"),
+            _make_option("subscription"),
+            _make_option("transaction_fee"),
         ],
         selected_id=None,
     )
     result = _postprocess_models_options(data)
-    order = [m["monetization"] for m in result["models"]]
+    order = [o["monetization"] for o in result["options"]]
     assert order == ["subscription", "transaction_fee", "retainer_plus_saas"]
 
 
 def test_models_options_selected_id_nulled():
-    existing_id = uuid4()
-    data = ModelsOptions(
-        models=[
-            _make_model("subscription"),
-            _make_model("transaction_fee"),
-            _make_model("retainer_plus_saas"),
-        ],
-        selected_id=existing_id,
-    )
+    options = [
+        _make_option("subscription"),
+        _make_option("transaction_fee"),
+        _make_option("retainer_plus_saas"),
+    ]
+    data = ModelsOptions(options=options, selected_id=options[0].id)
     result = _postprocess_models_options(data)
     assert result["selected_id"] is None
 
@@ -68,192 +59,108 @@ def test_models_options_selected_id_nulled():
 def test_models_options_uuids_regenerated():
     original_ids = [uuid4() for _ in range(3)]
     data = ModelsOptions(
-        models=[
-            _make_model("subscription"),
-            _make_model("transaction_fee"),
-            _make_model("retainer_plus_saas"),
+        options=[
+            _make_option("subscription"),
+            _make_option("transaction_fee"),
+            _make_option("retainer_plus_saas"),
         ],
     )
-    for m, oid in zip(data.models, original_ids):
-        object.__setattr__(m, "id", oid)
+    for o, oid in zip(data.options, original_ids):
+        object.__setattr__(o, "id", oid)
     result = _postprocess_models_options(data)
-    result_ids = [m["id"] for m in result["models"]]
+    result_ids = [o["id"] for o in result["options"]]
     assert all(rid not in [str(oid) for oid in original_ids] for rid in result_ids)
 
 
-def _make_canvas_item(text: str) -> CanvasItem:
-    return CanvasItem(id=uuid4(), text=text, is_ai_generated=False)
+def _make_canvas_card(text: str) -> CanvasCard:
+    return CanvasCard(id=uuid4(), text=text, is_ai_generated=False)
 
 
-def test_canvas_data_uuids_regenerated():
+def test_canvas_uuids_regenerated():
     original_id = uuid4()
-    item = CanvasItem(id=original_id, text="test", is_ai_generated=False)
-    data = CanvasData(
-        key_partners=[item, item],
-        key_activities=[item, item],
-        key_resources=[item, item],
-        value_propositions=[item, item],
-        customer_relationships=[item, item],
-        channels=[item, item],
-        customer_segments=[item, item],
-        cost_structure=[item, item],
-        revenue_streams=[item, item],
+    card = CanvasCard(id=original_id, text="A test card", is_ai_generated=False)
+    data = CanvasGenerated(
+        key_partners=[card, card],
+        key_activities=[card, card],
+        key_resources=[card, card],
+        value_propositions=[card, card],
+        customer_relationships=[card, card],
+        channels=[card, card],
+        customer_segments=[card, card],
+        cost_structure=[card, card],
+        revenue_streams=[card, card],
     )
-    result = _postprocess_canvas_data(data)
+    result = _postprocess_canvas(data)
     for items in result.values():
         for it in items:
             assert it["id"] != str(original_id)
             assert it["is_ai_generated"] is True
 
 
-def test_hypotheses_missing_category_raises():
-    # Schema validator catches missing category at construction time.
-    with pytest.raises(ValidationError):
-        Hypotheses(hypotheses=[
-            Hypothesis(id="H1.1", text="test 50%", category="Desirability", quadrant="q1"),
-            Hypothesis(id="H1.2", text="test 60%", category="Desirability", quadrant="q1"),
-            Hypothesis(id="H1.3", text="test 70%", category="Desirability", quadrant="q1"),
-            Hypothesis(id="H2.1", text="test €100", category="Viability", quadrant="q2"),
-            Hypothesis(id="H2.2", text="test €200", category="Viability", quadrant="q2"),
-            # Missing Feasibility
-        ])
+# Hypotheses has no postprocessing of its own anymore — it's sourced from
+# bizstruct_domain, which enforces D/V/F category coverage itself via a
+# cross-field validator (see bizstruct-domain's test_hypotheses.py).
 
 
-def test_hypotheses_all_categories_passes():
-    data = Hypotheses(hypotheses=[
-        Hypothesis(id="H1.1", text="test 50%", category="Desirability", quadrant="q1"),
-        Hypothesis(id="H2.1", text="test €100", category="Viability", quadrant="q2"),
-        Hypothesis(id="H3.1", text="test 2 weeks", category="Feasibility", quadrant="q3"),
-        Hypothesis(id="H3.2", text="test 95%", category="Feasibility", quadrant="q3"),
-        Hypothesis(id="H1.2", text="test 80%", category="Desirability", quadrant="q1"),
-    ])
-    result = _postprocess_hypotheses(data)
-    assert len(result["hypotheses"]) == 5
+def _make_move(action: ERRCAction) -> ERRCMove:
+    kwargs = dict(
+        action=action,
+        target_section=CanvasSection.KEY_PARTNERS,
+        target="Third-party logistics partner",
+        rationale="Reduces dependency on an external partner.",
+    )
+    if action in (ERRCAction.REDUCE, ERRCAction.RAISE_):
+        kwargs["new_text"] = "Regional logistics partner, smaller contract"
+    return ERRCMove(**kwargs)
 
 
-def _make_what_if_scenario(vector: str, color: str, icon: str, status: str) -> WhatIfScenario:
-    return WhatIfScenario(
+def _make_alternative() -> WhatIfAlternative:
+    return WhatIfAlternative(
         id=uuid4(),
-        vector=vector,  # type: ignore[arg-type]
-        color=color,  # type: ignore[arg-type]
-        icon=icon,  # type: ignore[arg-type]
-        title="What if title",
-        description="description",
-        value="value",
-        revenue="€1M",
-        status=status,  # type: ignore[arg-type]
-    )
-
-
-def test_what_if_order_guaranteed():
-    # Input in wrong order: Emotional, Financial, Technical
-    data = WhatIf(scenarios=[
-        _make_what_if_scenario("Emotional", "slate", "heartHandshake", "draft"),
-        _make_what_if_scenario("Financial", "indigo", "coins", "draft"),
-        _make_what_if_scenario("Technical", "teal", "cpu", "draft"),
-    ])
-    result = _postprocess_what_if(data)
-    vectors = [s["vector"] for s in result["scenarios"]]
-    assert vectors == ["Financial", "Technical", "Emotional"]
-
-
-def test_what_if_color_icon_deterministic():
-    data = WhatIf(scenarios=[
-        _make_what_if_scenario("Financial", "slate", "cpu", "draft"),   # wrong color/icon
-        _make_what_if_scenario("Technical", "indigo", "heartHandshake", "draft"),
-        _make_what_if_scenario("Emotional", "teal", "coins", "draft"),
-    ])
-    result = _postprocess_what_if(data)
-    scenarios = {s["vector"]: s for s in result["scenarios"]}
-    assert scenarios["Financial"]["color"] == "indigo"
-    assert scenarios["Financial"]["icon"] == "coins"
-    assert scenarios["Technical"]["color"] == "teal"
-    assert scenarios["Technical"]["icon"] == "cpu"
-    assert scenarios["Emotional"]["color"] == "slate"
-    assert scenarios["Emotional"]["icon"] == "heartHandshake"
-
-
-def test_what_if_status_applied_first():
-    data = WhatIf(scenarios=[
-        _make_what_if_scenario("Financial", "indigo", "coins", "draft"),
-        _make_what_if_scenario("Technical", "teal", "cpu", "draft"),
-        _make_what_if_scenario("Emotional", "slate", "heartHandshake", "draft"),
-    ])
-    result = _postprocess_what_if(data)
-    statuses = [s["status"] for s in result["scenarios"]]
-    assert statuses == ["applied", "draft", "draft"]
-
-
-def test_architecture_statuses_enforced():
-    # The schema enforces Literal["determined"] / Literal["system_selection"],
-    # so postprocessing on a valid object must preserve — and always write — these statuses.
-    data = Architecture(
-        uk=ArchLocale(
-            epicenter=Epicenter(value="Finance-driven", description="desc"),
-            pattern=Pattern(value="FREE", subtype="Freemium", description="desc"),
-        ),
-        en=ArchLocale(
-            epicenter=Epicenter(value="Finance-driven", description="desc"),
-            pattern=Pattern(value="FREE", subtype="Freemium", description="desc"),
-        ),
-    )
-    fixed = _postprocess_architecture(data)
-    assert fixed["uk"]["epicenter"]["status"] == "determined"
-    assert fixed["uk"]["pattern"]["status"] == "system_selection"
-    assert fixed["en"]["epicenter"]["status"] == "determined"
-    assert fixed["en"]["pattern"]["status"] == "system_selection"
-
-
-def _make_pitch() -> Pitch:
-    def inv(t: str) -> InvestorSlide:
-        return InvestorSlide(type=t, headline="headline", content="content")  # type: ignore[arg-type]
-
-    def cli(t: str) -> ClientSlide:
-        return ClientSlide(type=t, headline="headline", content="content")  # type: ignore[arg-type]
-
-    locale = PitchLocale(
-        investor=[inv("ask"), inv("traction"), inv("solution"), inv("problem"), inv("hook")],
-        client=[cli("invitation"), cli("social_proof"), cli("transformation"), cli("empathy"), cli("opening")],
-    )
-    return Pitch(uk=locale, en=locale)
-
-
-def test_pitch_order_fixed():
-    data = _make_pitch()
-    result = _postprocess_pitch(data)
-    investor_types = [s["type"] for s in result["uk"]["investor"]]
-    client_types = [s["type"] for s in result["uk"]["client"]]
-    assert investor_types == ["hook", "problem", "solution", "traction", "ask"]
-    assert client_types == ["opening", "empathy", "transformation", "social_proof", "invitation"]
-
-
-def _make_scenario() -> Scenario:
-    def step(icon: str, label: str, highlight: bool) -> TimelineStep:
-        return TimelineStep(icon_key=icon, label_key=label, text="text", highlight=highlight)  # type: ignore[arg-type]
-
-    locale = ScenarioLocale(
-        persona=Persona(name="Test User", initials="TU", role="CFO", pain_point="pain"),
-        timeline=[
-            step("calendar", "scenario.step.context", False),
-            step("target", "scenario.step.goal", False),
-            step("zap", "scenario.step.action", False),       # wrong highlight
-            step("check-circle", "scenario.step.result", False),  # wrong highlight
-            step("trending-up", "scenario.step.impact", True),    # wrong highlight
+        title="Direct delivery",
+        premise="Remove logistics intermediaries.",
+        moves=[
+            _make_move(ERRCAction.ELIMINATE),
+            _make_move(ERRCAction.REDUCE),
+            _make_move(ERRCAction.RAISE_),
         ],
-        metrics=ScenarioMetrics(
-            before=MetricValue(value="3 weeks", label="before"),
-            after=MetricValue(value="30 min", label="after"),
-        ),
+        expected_impact="Lower delivery cost.",
     )
-    return Scenario(uk=locale, en=locale)
 
 
-def test_scenario_highlight_enforced():
-    data = _make_scenario()
-    result = _postprocess_scenario(data)
-    highlights = [(s["label_key"], s["highlight"]) for s in result["uk"]["timeline"]]
-    assert ("scenario.step.action", True) in highlights
-    assert ("scenario.step.result", True) in highlights
-    assert ("scenario.step.context", False) in highlights
-    assert ("scenario.step.goal", False) in highlights
-    assert ("scenario.step.impact", False) in highlights
+def test_what_if_uuids_regenerated():
+    original_ids = [uuid4() for _ in range(3)]
+    alts = [_make_alternative() for _ in range(3)]
+    for alt, oid in zip(alts, original_ids):
+        object.__setattr__(alt, "id", oid)
+    data = WhatIfGenerated(alternatives=alts)
+    result = _postprocess_what_if(data)
+    result_ids = [a["id"] for a in result["alternatives"]]
+    assert all(rid not in [str(oid) for oid in original_ids] for rid in result_ids)
+
+
+def test_what_if_status_left_draft():
+    """Postprocessing must not assign `applied` — that's a user decision,
+    not a generation-time default (bizstruct-domain what_if module
+    docstring, B1)."""
+    data = WhatIfGenerated(alternatives=[_make_alternative() for _ in range(3)])
+    result = _postprocess_what_if(data)
+    statuses = [a["status"] for a in result["alternatives"]]
+    assert statuses == ["draft", "draft", "draft"]
+
+
+# Architecture no longer has bespoke postprocessing — see
+# tests/test_architecture_generator.py for its generator-level coverage
+# (schema now comes from bizstruct_domain).
+
+
+# Pitch has no postprocessing of its own anymore — it's sourced from
+# bizstruct_domain, which enforces slide order itself via a cross-field
+# validator (see bizstruct-domain's test_pitch.py), and the audience field
+# is `customer` there, not `client`.
+
+
+# Scenario has no postprocessing of its own anymore — it's sourced from
+# bizstruct_domain, which enforces step order/icon pairing itself (see
+# bizstruct-domain's test_scenario.py) and no longer carries `highlight`
+# (that's presentation logic, moved to the frontend).

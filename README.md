@@ -56,7 +56,7 @@ pytest
 3. Set Content Type: `application/json`
 4. Body:
    ```json
-   {"project_id": "your-project-uuid", "block": "canvas_data"}
+   {"project_id": "your-project-uuid", "block": "canvas"}
    ```
 
 ### Using Azure CLI
@@ -65,10 +65,10 @@ pytest
 az servicebus message send \
   --connection-string "$SERVICE_BUS_CONNECTION_STRING" \
   --queue-name generation-tasks \
-  --body '{"project_id": "your-project-uuid", "block": "canvas_data"}'
+  --body '{"project_id": "your-project-uuid", "block": "canvas"}'
 ```
 
-Valid block values: `models_options`, `canvas_data`, `empathy_map`, `hypotheses`, `pitch`, `scenario`, `what_if`, `architecture`
+Valid block values: `models_options`, `canvas`, `empathy_map`, `hypotheses`, `pitch`, `scenario`, `what_if`, `architecture`
 
 ## Queue Configuration Requirements
 

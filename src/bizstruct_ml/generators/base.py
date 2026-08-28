@@ -6,33 +6,35 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from bizstruct_ml.config import settings
 from bizstruct_ml.llm.client import LLMClient, LLMError
+from bizstruct_ml.llm.prompts._shared import context_blocks_used
+from bizstruct_ml.observability import tracing
 from bizstruct_ml.schemas.project import ProjectState
-from bizstruct_ml.schemas.blocks.models_options import ModelsOptions
-from bizstruct_ml.schemas.blocks.canvas_data import CanvasData
-from bizstruct_ml.schemas.blocks.hypotheses import Hypotheses
-from bizstruct_ml.schemas.blocks.what_if import WhatIf, WhatIfScenario
-from bizstruct_ml.schemas.blocks.architecture import Architecture
-from bizstruct_ml.schemas.blocks.pitch import Pitch, INVESTOR_ORDER, CLIENT_ORDER
-from bizstruct_ml.schemas.blocks.scenario import Scenario
+from bizstruct_ml.validation.degenerate_text import DegenerateTextError, validate_block_text
+from bizstruct_domain.blocks.canvas import CanvasGenerated
+from bizstruct_domain.blocks.what_if import WhatIfGenerated
+from bizstruct_domain.blocks.architecture import Architecture
+from bizstruct_domain.blocks.empathy_map import EmpathyMap
+from bizstruct_domain.blocks.scenario import Scenario
+from bizstruct_domain.blocks.pitch import Pitch
+from bizstruct_domain.blocks.hypotheses import Hypotheses
+from bizstruct_domain.blocks.models_options import ModelsOptions
 
-_VECTOR_COLOR = {"Financial": "indigo", "Technical": "teal", "Emotional": "slate"}
-_VECTOR_ICON = {"Financial": "coins", "Technical": "cpu", "Emotional": "heartHandshake"}
 _MONETIZATION_ORDER = ["subscription", "transaction_fee", "retainer_plus_saas"]
 
 
 def _postprocess_models_options(data: ModelsOptions) -> dict:
     order = {m: i for i, m in enumerate(_MONETIZATION_ORDER)}
-    sorted_models = sorted(data.models, key=lambda m: order.get(m.monetization, 99))
+    sorted_options = sorted(data.options, key=lambda o: order.get(o.monetization.value, 99))
     result = data.model_copy(
         update={
-            "models": [m.model_copy(update={"id": uuid4()}) for m in sorted_models],
+            "options": [o.model_copy(update={"id": uuid4()}) for o in sorted_options],
             "selected_id": None,
         }
     )
     return result.model_dump(mode="json")
 
 
-def _postprocess_canvas_data(data: CanvasData) -> dict:
+def _postprocess_canvas(data: CanvasGenerated) -> dict:
     dump = data.model_dump(mode="json")
     for section_items in dump.values():
         if isinstance(section_items, list):
@@ -42,67 +44,15 @@ def _postprocess_canvas_data(data: CanvasData) -> dict:
     return dump
 
 
-def _postprocess_hypotheses(data: Hypotheses) -> dict:
-    categories = {h.category for h in data.hypotheses}
-    required = {"Desirability", "Viability", "Feasibility"}
-    missing = required - categories
-    if missing:
-        raise ValidationError.from_exception_data(
-            title="Hypotheses",
-            input_type="python",
-            line_errors=[{
-                "type": "value_error",
-                "loc": ("hypotheses",),
-                "msg": f"Missing hypotheses for categories: {missing}",
-                "input": data.hypotheses,
-                "ctx": {"error": ValueError(f"Missing categories: {missing}")},
-            }],
-        )
-    return data.model_dump(mode="json")
-
-
-def _postprocess_what_if(data: WhatIf) -> dict:
-    vector_order = ["Financial", "Technical", "Emotional"]
-    sorted_scenarios = sorted(
-        data.scenarios,
-        key=lambda s: vector_order.index(s.vector) if s.vector in vector_order else 99,
-    )
-    fixed: list[WhatIfScenario] = []
-    for i, s in enumerate(sorted_scenarios):
-        fixed.append(s.model_copy(update={
-            "id": uuid4(),
-            "color": _VECTOR_COLOR[s.vector],
-            "icon": _VECTOR_ICON[s.vector],
-            "status": "applied" if i == 0 else "draft",
-        }))
-    return WhatIf(scenarios=fixed).model_dump(mode="json")
-
-
-def _postprocess_architecture(data: Architecture) -> dict:
-    dump = data.model_dump(mode="json")
-    for locale in dump.values():
-        locale["epicenter"]["status"] = "determined"
-        locale["pattern"]["status"] = "system_selection"
-    return dump
-
-
-def _postprocess_pitch(data: Pitch) -> dict:
-    dump = data.model_dump(mode="json")
-    for locale in dump.values():
-        inv = locale["investor"]
-        inv.sort(key=lambda s: INVESTOR_ORDER.index(s["type"]) if s["type"] in INVESTOR_ORDER else 99)
-        cli = locale["client"]
-        cli.sort(key=lambda s: CLIENT_ORDER.index(s["type"]) if s["type"] in CLIENT_ORDER else 99)
-    return dump
-
-
-def _postprocess_scenario(data: Scenario) -> dict:
-    ACTION_RESULT = {"scenario.step.action", "scenario.step.result"}
-    dump = data.model_dump(mode="json")
-    for locale in dump.values():
-        for step in locale["timeline"]:
-            step["highlight"] = step["label_key"] in ACTION_RESULT
-    return dump
+def _postprocess_what_if(data: WhatIfGenerated) -> dict:
+    # Only the id is assigned here (placeholder -> real, same as every
+    # other block). Status is NOT touched: WhatIfGenerated's own validator
+    # already guarantees every alternative came back status=draft — see
+    # bizstruct-domain's what_if module docstring, B1. Deciding which (if
+    # any) alternative is applied is a user action on the persisted Canvas/
+    # WhatIf, not something generation or postprocessing does.
+    fixed = [alt.model_copy(update={"id": uuid4()}) for alt in data.alternatives]
+    return WhatIfGenerated(alternatives=fixed).model_dump(mode="json")
 
 
 class BaseGenerator:
@@ -124,18 +74,68 @@ class BaseGenerator:
     async def generate(self, project: ProjectState) -> dict:
         llm = self._get_llm()
 
+        with tracing.span("build_prompt") as bp_span:
+            messages = self.build_prompt(project)
+            bp_span.update(output={"context_blocks": context_blocks_used(project)})
+
+        attempts = {"n": 0}
+
         @retry(
             stop=stop_after_attempt(settings.llm_max_retries + 1),
             wait=wait_exponential(min=2, max=8),
-            retry=retry_if_exception_type((LLMError, ValidationError)),
+            retry=retry_if_exception_type((LLMError, ValidationError, DegenerateTextError)),
             reraise=True,
         )
         async def _run() -> dict:
-            messages = self.build_prompt(project)
-            result = await llm.generate_structured(messages, self.schema)
-            return self.postprocess(result)
+            attempts["n"] += 1
+            with tracing.generation_span(
+                "llm_call",
+                model=llm.model_name,
+                input=messages,
+                metadata={"attempt": attempts["n"]},
+            ) as gen_span:
+                result = await llm.generate_structured(messages, self.schema)
+                gen_span.update(
+                    output=result.model_dump(mode="json"),
+                    usage_details=llm.last_usage,
+                )
+            with tracing.span("postprocess") as pp_span:
+                data = self.postprocess(result)
+                pp_span.update(output=data)
 
-        return await _run()
+            # Pydantic's own schema (min_length/max_length/enums/cross-field
+            # validators) can't catch a syntactically-valid-but-degenerate
+            # string — see validation/degenerate_text.py's module docstring.
+            # Always recorded to Langfuse (even log-only violations), since
+            # otherwise there's no way to measure how often this happens
+            # across a real experimental run.
+            with tracing.span("validate_text") as vt_span:
+                violations = validate_block_text(self.schema, data, project.language or "en")
+                vt_span.update(
+                    metadata={
+                        "violations": [
+                            {"field": v.field_path, "kind": v.kind, "detail": v.detail, "retry_worthy": v.retry_worthy}
+                            for v in violations
+                        ]
+                    }
+                )
+                retry_worthy = [v for v in violations if v.retry_worthy]
+                if retry_worthy:
+                    raise DegenerateTextError(retry_worthy)
+
+            return data
+
+        try:
+            result_data = await _run()
+        finally:
+            # Retries here mean tenacity caught a ValidationError (bad
+            # schema from the LLM) or LLMError and re-ran the whole
+            # build->call->postprocess step. attempts["n"] - 1 is the retry
+            # count; a direct trace attribute, since it's a straight
+            # indicator of prompt quality for this block.
+            tracing.update_current_span(metadata={"llm_retry_count": attempts["n"] - 1})
+
+        return result_data
 
 
 class ModelsOptionsGenerator(BaseGenerator):
@@ -150,28 +150,28 @@ class ModelsOptionsGenerator(BaseGenerator):
         return _postprocess_models_options(data)  # type: ignore[arg-type]
 
 
-class CanvasDataGenerator(BaseGenerator):
-    block = "canvas_data"
-    schema = CanvasData
+class CanvasGenerator(BaseGenerator):
+    block = "canvas"
+    schema = CanvasGenerated
 
     def build_prompt(self, project: ProjectState) -> list[dict]:
-        from bizstruct_ml.llm.prompts.canvas_data import build_messages
+        from bizstruct_ml.llm.prompts.canvas import build_messages
         return build_messages(project)
 
     def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_canvas_data(data)  # type: ignore[arg-type]
+        return _postprocess_canvas(data)  # type: ignore[arg-type]
 
 
 class EmpathyMapGenerator(BaseGenerator):
     block = "empathy_map"
-
-    def __init__(self) -> None:
-        from bizstruct_ml.schemas.blocks.empathy_map import EmpathyMap
-        self.schema = EmpathyMap
+    schema = EmpathyMap
 
     def build_prompt(self, project: ProjectState) -> list[dict]:
         from bizstruct_ml.llm.prompts.empathy_map import build_messages
         return build_messages(project)
+
+    # No postprocessing needed — bizstruct_domain.blocks.empathy_map.EmpathyMap
+    # has no derived/status fields to fix up.
 
 
 class HypothesesGenerator(BaseGenerator):
@@ -182,8 +182,8 @@ class HypothesesGenerator(BaseGenerator):
         from bizstruct_ml.llm.prompts.hypotheses import build_messages
         return build_messages(project)
 
-    def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_hypotheses(data)  # type: ignore[arg-type]
+    # No postprocessing needed — bizstruct_domain.blocks.hypotheses.Hypotheses
+    # enforces D/V/F category coverage itself via a cross-field validator.
 
 
 class PitchGenerator(BaseGenerator):
@@ -194,8 +194,8 @@ class PitchGenerator(BaseGenerator):
         from bizstruct_ml.llm.prompts.pitch import build_messages
         return build_messages(project)
 
-    def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_pitch(data)  # type: ignore[arg-type]
+    # No postprocessing needed — bizstruct_domain.blocks.pitch.Pitch enforces
+    # slide order itself via a cross-field validator.
 
 
 class ScenarioGenerator(BaseGenerator):
@@ -206,13 +206,15 @@ class ScenarioGenerator(BaseGenerator):
         from bizstruct_ml.llm.prompts.scenario import build_messages
         return build_messages(project)
 
-    def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_scenario(data)  # type: ignore[arg-type]
+    # No postprocessing needed — bizstruct_domain.blocks.scenario.Scenario
+    # has no derived/status fields to fix up. In particular, step highlighting
+    # is no longer computed here: it's presentation logic, moved to the
+    # frontend (derived from step_type).
 
 
 class WhatIfGenerator(BaseGenerator):
     block = "what_if"
-    schema = WhatIf
+    schema = WhatIfGenerated
 
     def build_prompt(self, project: ProjectState) -> list[dict]:
         from bizstruct_ml.llm.prompts.what_if import build_messages
@@ -230,5 +232,6 @@ class ArchitectureGenerator(BaseGenerator):
         from bizstruct_ml.llm.prompts.architecture import build_messages
         return build_messages(project)
 
-    def postprocess(self, data: BaseModel) -> dict:
-        return _postprocess_architecture(data)  # type: ignore[arg-type]
+    # No postprocessing needed — bizstruct_domain.blocks.architecture.Architecture
+    # is a flat model with no derived/status fields to fix up; the default
+    # BaseGenerator.postprocess() (a plain model_dump) is sufficient.

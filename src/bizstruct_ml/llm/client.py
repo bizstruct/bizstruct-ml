@@ -38,6 +38,15 @@ class LLMClient:
     def __init__(self) -> None:
         self._client = _build_client()
         self._model = _model_name()
+        # Populated after each generate_structured() call — for tracing
+        # (Langfuse generation spans need token usage per call). Single
+        # generator owns its LLMClient and calls are sequential, so there's
+        # no concurrency hazard in stashing this on the instance.
+        self.last_usage: dict[str, int] | None = None
+
+    @property
+    def model_name(self) -> str:
+        return self._model
 
     async def generate_structured(
         self,
@@ -49,6 +58,16 @@ class LLMClient:
                 model=self._model,
                 messages=messages,
                 response_format=schema,
+            )
+            usage = completion.usage
+            self.last_usage = (
+                {
+                    "input": usage.prompt_tokens,
+                    "output": usage.completion_tokens,
+                    "total": usage.total_tokens,
+                }
+                if usage is not None
+                else None
             )
             result = completion.choices[0].message.parsed
             if result is None:

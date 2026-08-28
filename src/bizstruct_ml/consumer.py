@@ -27,6 +27,14 @@ class _SBMessageAdapter:
         self._receiver = receiver
         self._msg = msg
 
+    @property
+    def delivery_count(self) -> int:
+        """Number of times Service Bus has delivered this message (1 on the
+        first delivery). Used for tracing (attempt_number) — not otherwise
+        load-bearing here, so defaults to 1 if the underlying message
+        doesn't expose it for some reason."""
+        return getattr(self._msg, "delivery_count", 1) or 1
+
     async def complete_message(self, _: object) -> None:
         await self._receiver.complete_message(self._msg)  # type: ignore[attr-defined]
 

@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     webpubsub_connection_string: str | None = None
     webpubsub_hub: str = "projects"
 
+    # Langfuse — опціонально. Якщо public/secret key не задані, трейсинг
+    # повністю вимкнений: воркер працює як без нього, без жодних помилок
+    # (див. bizstruct_ml.observability.tracing).
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_host: str | None = None
+
+    @property
+    def langfuse_enabled(self) -> bool:
+        return bool(self.langfuse_public_key and self.langfuse_secret_key)
+
     # Runtime
     llm_max_retries: int = 2
     log_level: str = "INFO"
