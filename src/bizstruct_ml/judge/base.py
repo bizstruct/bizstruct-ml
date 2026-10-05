@@ -73,6 +73,47 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _input_ids(inputs: Sequence[Any]) -> list[str]:
+    """Ids of the provided inputs, in order, without duplicates. Inputs without an
+    `id` (a Brief, an absent optional input) contribute nothing."""
+    ids: list[str] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                add(item)
+            return
+        artifact_id = value.get("id") if isinstance(value, dict) else getattr(value, "id", None)
+        if isinstance(artifact_id, str) and artifact_id not in ids:
+            ids.append(artifact_id)
+
+    for value in inputs:
+        add(value)
+    return ids
+
+
+def _ground(report: ConsistencyReport, check: JudgeCheck, inputs: Sequence[Any]) -> ConsistencyReport:
+    """Make a judge report trustworthy about what it cites.
+
+    Every violation gets `rule_id = check.id` (the model may not echo it right).
+    Cited artifact ids that are not ids of the provided inputs are dropped; if
+    none remain the violation cites all provided ids instead, and if the inputs
+    carry no id at all the violation is dropped (and logged): it could not be
+    attributed to any artifact.
+    """
+    known = _input_ids(inputs)
+    kept = []
+    for violation in report.violations:
+        cited = [i for i in violation.artifact_ids if i in known]
+        if not cited:
+            cited = list(known)
+        if not cited:
+            log.warning("judge_violation_dropped", check_id=check.id, message=violation.message)
+            continue
+        kept.append(violation.model_copy(update={"rule_id": check.id, "artifact_ids": cited}))
+    return report.model_copy(update={"violations": kept})
+
+
 _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
 
 
@@ -121,6 +162,7 @@ class ConsistencyJudge:
             log.warning("judge_unavailable", check_id=check.id, error=str(e))
             raise JudgeUnavailable(f"{check.id}: {e}") from e
 
+        report = _ground(report, check, inputs)
         if not JUDGE_BLOCKING:
             report = report.model_copy(
                 update={"violations": [v.model_copy(update={"severity": "warning"}) for v in report.violations]}
