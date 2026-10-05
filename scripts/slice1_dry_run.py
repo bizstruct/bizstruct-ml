@@ -125,7 +125,7 @@ async def probe_schemas() -> int:
     return 1 if rejected else 0
 
 
-async def main(idea: str, language: str) -> int:
+async def main(idea: str, language: str, json_path: str | None = None) -> int:
     llm = UsageLLM(LLMClient())
     judge, judge_label = build_judge()
     runner = StageRunner(SLICE_1_GENERATORS, llm, judge)
@@ -165,6 +165,30 @@ async def main(idea: str, language: str) -> int:
         for error in errors:
             print(f"- {error}")
     ok = all(r.status.value == "done" for r in backend.rows.values()) and not failed
+    if json_path:
+        Path(json_path).write_text(
+            json.dumps(
+                {
+                    "idea": idea,
+                    "language": language,
+                    "ok": ok,
+                    "tokens": total,
+                    "calls": [{"schema": c.schema, "usage": c.usage, "error": c.error} for c in llm.calls],
+                    "rows": [
+                        {
+                            "id": r.id,
+                            "stage": r.stage.value,
+                            "instance_index": r.instance_index,
+                            "status": r.status.value,
+                            "artifacts": [a.data for a in r.artifacts],
+                        }
+                        for r in backend.rows.values()
+                    ],
+                },
+                ensure_ascii=False,
+                indent=1,
+            )
+        )
     print(f"\nrows: {len(backend.rows)}  dispositions: {[d.reason for d in dispositions]}  result: {'OK' if ok else 'PROBLEMS'}")
     return 0 if ok else 1
 
@@ -173,6 +197,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("idea", nargs="?", default=DEFAULT_IDEA)
     parser.add_argument("--language", default="en", choices=["en", "uk"])
+    parser.add_argument("--json", dest="json_path", help="also write the rows, calls and token totals to this file")
     parser.add_argument("--probe-schemas", action="store_true", help="only check which generation schemas the API accepts")
     args = parser.parse_args()
-    sys.exit(asyncio.run(probe_schemas() if args.probe_schemas else main(args.idea, args.language)))
+    sys.exit(asyncio.run(probe_schemas() if args.probe_schemas else main(args.idea, args.language, args.json_path)))

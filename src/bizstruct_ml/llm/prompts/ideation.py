@@ -6,6 +6,9 @@ from bizstruct_ml.core.stage_runner import StageContext
 from bizstruct_ml.llm.prompts._shared import content_json, field_guide, language_rule
 from bizstruct_ml.llm.prompts.customer_scenario import brief_of, own_empathy_map
 
+# 1 = the text merged in PR #5.
+PROMPT_VERSION = "1"
+
 SYSTEM = f"""\
 You do the ideation step for the persona of one empathy map. It has two independent parts that start from the same input, the Brief and the \
 empathy map, and produce different things.

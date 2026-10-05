@@ -6,6 +6,18 @@ from bizstruct_ml.core.context import ContextError
 from bizstruct_ml.core.stage_runner import StageContext
 from bizstruct_ml.llm.prompts._shared import content_json, field_guide, language_rule
 
+# 1 = the text merged in PR #5; 2 = hard boundary between says_and_does and thinks_and_feels.
+PROMPT_VERSION = "2"
+
+SAYS_AND_DOES_RULE = """\
+Hard boundary for says_and_does: it holds only what an observer could hear or see, that is words said aloud and visible actions. \
+Anything the persona privately thinks, feels, fears or wants belongs in thinks_and_feels, never in says_and_does. To show the gap between \
+public words and private thoughts, put the public words in says_and_does and the private thought in thinks_and_feels; do not restate \
+the private thought inside says_and_does.
+Wrong in says_and_does: "Publicly she says she is fine, but privately she fears she cannot keep up." (the private fear cannot be observed).
+Right: in says_and_does "She tells other parents she is fine."; in thinks_and_feels "She fears she cannot keep up and hides it." \
+Each field then holds one kind of content."""
+
 SYSTEM = f"""\
 You build an empathy map for one customer segment. First give the persona a name and demographic \
 characteristics (such as income and family status), then fill the six parts of the map:
@@ -13,10 +25,11 @@ characteristics (such as income and family status), then fill the six parts of t
 and the problems met.
 2. hears: what friends and family say, who really influences the persona, which media channels are influential.
 3. thinks_and_feels: what really matters to the persona, including what they would not say in public; emotions, worries, dreams and aspirations.
-4. says_and_does: public behaviour and attitude, what the persona tells others. Show the gap between what is said in public \
-and what is really thought (part 3) explicitly rather than ignoring it.
+4. says_and_does: public behaviour and attitude, what the persona tells others; see the hard boundary below.
 5. pains: the biggest frustrations, obstacles between the persona and the wanted result, risks the persona fears.
 6. gains: what the persona actually wants to achieve, how success is measured, possible strategies for reaching the goals.
+
+{SAYS_AND_DOES_RULE}
 
 Profile only the segment you are given, as one concrete persona. Ground everything in the Brief; where the Brief is silent, \
 stay plausible for the segment and do not contradict the Brief.

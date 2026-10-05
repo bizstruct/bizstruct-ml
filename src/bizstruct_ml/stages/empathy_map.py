@@ -8,6 +8,7 @@ from bizstruct_ml.llm.prompts import empathy_map as prompt
 
 
 class EmpathyMapGenerator(StageGenerator):
+    prompt_version: ClassVar[str] = prompt.PROMPT_VERSION
     stage: ClassVar[Stage] = Stage.EMPATHY_MAP
 
     def build_messages(self, ctx: StageContext) -> list[dict]:

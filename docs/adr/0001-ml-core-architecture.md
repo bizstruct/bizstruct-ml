@@ -45,6 +45,10 @@ Judge і генератор — окремі деплойменти й ключ�
 
 Після `generate_structured` і до `to_artifacts` runner виконує `validation/degenerate_text.validate_block_text` над виходом LLM, за контрактом генерації етапу й мовою знімка. Знахідка `retry_worthy` (чужа мова, заборонене письмо, повтори) повторює генерацію як помилку схеми, а коли повтори вичерпано — рядок завершується `GENERATION_FAILED`; усі знахідки йдуть у span `validate_text`. Поля, що не є прозою (`channel_type`, `relationship_type`, `breakeven_formula`, `title`), виключено з перевірки мови; імена з великої літери й короткі аліаси сегментів і так нейтральні.
 
+### Версії промптів
+
+Кожен модуль промпту має `PROMPT_VERSION`, а `StageGenerator.prompt_version` його віддзеркалює. Версію записано в метадані трасування (корінь трасування: `metadata.prompt_version` і тег `prompt:<версія>`; span `llm_call`: `metadata.prompt_version`), щоб результат можна було пов'язати з текстом промпту, який його створив. Правило: змінюєш текст промпту — підвищуєш версію. `1` — текст, злитий у PR #5; `2` — `empathy_map` (жорстка межа `says_and_does` / `thinks_and_feels`) і `customer_scenario` (список сегментів проєкту з позначкою сегмента цього рядка, сувора вимога до `interdependence_signal`).
+
 ### Judge дорадчий
 
 Константа `JUDGE_BLOCKING = False` (`judge/base.py`): знахідки judge обмежуються рівнем `warning` і не блокують `DONE`. Це тимчасово — до вирішення відкритого питання 5 ADR-0011 («які знахідки judge мають рівень `error`»). Тести фіксують обидва значення константи.

@@ -8,6 +8,7 @@ from bizstruct_ml.llm.prompts import customer_scenario as prompt
 
 
 class CustomerScenarioGenerator(StageGenerator):
+    prompt_version: ClassVar[str] = prompt.PROMPT_VERSION
     stage: ClassVar[Stage] = Stage.CUSTOMER_SCENARIO
 
     def build_messages(self, ctx: StageContext) -> list[dict]:
