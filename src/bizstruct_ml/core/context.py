@@ -57,6 +57,28 @@ def gather_context(row: StageRow, rows: Mapping[str, StageRow]) -> dict[Stage, l
     return context
 
 
+def gather_closure(row: StageRow, rows: Mapping[str, StageRow]) -> dict[Stage, list[BaseModel]]:
+    """Artifacts of every row reachable from `row` through `refs`, transitively
+    (the row itself excluded), labelled by stage. Same errors as `gather_context`."""
+    closure: dict[Stage, list[BaseModel]] = {}
+    seen = {row.id}
+    frontier = [row]
+    while frontier:
+        direct = [(stage, ids) for current in frontier for stage, ids in current.refs.items()]
+        frontier = []
+        for stage, ids in direct:
+            for row_id in ids:
+                if row_id in seen:
+                    continue
+                seen.add(row_id)
+                ref = rows.get(row_id)
+                if ref is None:
+                    raise ContextError(f"row {row.id} reaches {stage.value} row {row_id}, which is not in the snapshot")
+                closure.setdefault(ref.stage, []).extend(parse_row_artifacts(ref))
+                frontier.append(ref)
+    return closure
+
+
 def _of_stage(artifacts: Sequence[BaseModel], stage: Stage) -> list[BaseModel]:
     return [a for a in artifacts if _stage_of(a) == stage]
 

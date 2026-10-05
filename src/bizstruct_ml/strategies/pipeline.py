@@ -36,12 +36,13 @@ from bizstruct_ml.judge.factory import build_judge_model
 from bizstruct_ml.judge.guard import assert_different_family
 from bizstruct_ml.llm.client import GENERATOR_FAMILY, LLMClient
 from bizstruct_ml.observability import tracing
+from bizstruct_ml.stages import SLICE_1_GENERATORS
 
 log = structlog.get_logger()
 
 # Stage generators the pipeline can run. A stage absent here is dead-lettered
 # with a clear reason; slices add their stages by registering them here.
-STAGE_GENERATORS: dict[Stage, StageGenerator] = {}
+STAGE_GENERATORS: dict[Stage, StageGenerator] = {**SLICE_1_GENERATORS}
 
 
 class Action(StrEnum):
@@ -147,7 +148,7 @@ async def _process(message: QueueMessage, backend: BackendClient, runner: StageR
     bound_log.info("generation_started")
     start = time.monotonic()
     try:
-        outcome = await runner.run(row, snapshot, message.language)
+        outcome = await runner.run(row, snapshot, snapshot.language)
     except Exception as e:  # a bug or an unexpected provider error must not loop the message forever
         bound_log.error("generation_crashed", error=str(e), exc_info=True)
         outcome = RunOutcome(

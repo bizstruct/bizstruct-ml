@@ -5,6 +5,7 @@ No network anywhere: the generator LLM is `FakeLLM`, the judge is
 or (from slice 1) the in-memory fake backend.
 """
 
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from bizstruct_domain.schemas import (
@@ -28,12 +29,13 @@ PROJECT_ID = "project_001"
 
 class FakeLLM:
     """Replies with the scripted items in order (the last repeats): a model
-    instance, or an exception to raise. Records every call."""
+    instance, an exception to raise, or a callable `(messages, schema) -> model`.
+    Records every call."""
 
     model_name = "fake-llm"
     last_usage: dict[str, int] | None = None
 
-    def __init__(self, replies: list[BaseModel | Exception]) -> None:
+    def __init__(self, replies: list[BaseModel | Exception | Callable[[list[dict], type[BaseModel]], BaseModel]]) -> None:
         self._replies = replies
         self.calls: list[dict[str, Any]] = []
 
@@ -42,7 +44,7 @@ class FakeLLM:
         item = self._replies[min(len(self.calls), len(self._replies)) - 1]
         if isinstance(item, Exception):
             raise item
-        return item
+        return item(messages, schema) if callable(item) else item
 
 
 def empathy_generated(name: str = "Olena") -> EmpathyMapGenerated:
