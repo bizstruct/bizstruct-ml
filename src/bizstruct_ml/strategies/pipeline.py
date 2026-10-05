@@ -11,11 +11,13 @@ from enum import StrEnum
 import bizstruct_domain
 import structlog
 from bizstruct_domain.schemas import (
+    ProjectSnapshot,
     QueueMessage,
     Stage,
     StageErrorCode,
     StageFailure,
     StageResult,
+    StageRow,
     StageStatus,
 )
 from pydantic import BaseModel
@@ -99,37 +101,44 @@ async def handle_message(
         bound_log.error("message_dead_lettered", reason="no_generator")
         return _dead_letter("NoGenerator", f"No generator is registered for stage '{target.stage.value}'")
 
+    loaded = await _load(message, backend, bound_log)
+    if isinstance(loaded, Disposition):
+        return loaded
+    snapshot, row = loaded
+
+    # The snapshot's language is the authoritative one (the message carries a copy
+    # only for early attribution); the runner and the trace metadata both use it.
     with tracing.trace_block_generation(
         project_id=message.project_id,
         block=target.stage.value,
         mode="pipeline",
         attempt_number=delivery_count,
         domain_version=bizstruct_domain.__version__,
-        language=message.language,
+        language=snapshot.language,
     ) as root_span:
         try:
-            disposition = await _process(message, backend, runner, bound_log)
+            disposition = await _generate_and_send(message, snapshot, row, backend, runner, bound_log)
         finally:
             await tracing.aflush()
         root_span.update(output={"outcome": disposition.action.value, "reason": disposition.reason})
         return disposition
 
 
-async def _process(message: QueueMessage, backend: BackendClient, runner: StageRunner, bound_log) -> Disposition:
+async def _load(message: QueueMessage, backend: BackendClient, bound_log) -> tuple[ProjectSnapshot, StageRow] | Disposition:
+    """Fetch the snapshot and decide whether there is any work: a Disposition means
+    the message is settled without generating (missing, stale or already applied)."""
     target = message.targets[0]
-
-    with tracing.span("fetch_snapshot"):
-        try:
-            snapshot = await backend.get_snapshot(message.project_id, target.stage_row_id)
-        except ProjectNotFoundError as e:
-            bound_log.error("message_dead_lettered", reason="project_not_found")
-            return _dead_letter("ProjectNotFound", str(e))
-        except BackendRejectedError as e:
-            bound_log.error("message_dead_lettered", reason="snapshot_rejected", status_code=e.status_code)
-            return _dead_letter(f"SnapshotRejected_{e.status_code}", f"HTTP {e.status_code}: {e.body}")
-        except BackendUnavailableError as e:
-            bound_log.warning("message_abandoned", reason="backend_unavailable", error=str(e))
-            return _abandon("BackendUnavailable", str(e))
+    try:
+        snapshot = await backend.get_snapshot(message.project_id, target.stage_row_id)
+    except ProjectNotFoundError as e:
+        bound_log.error("message_dead_lettered", reason="project_not_found")
+        return _dead_letter("ProjectNotFound", str(e))
+    except BackendRejectedError as e:
+        bound_log.error("message_dead_lettered", reason="snapshot_rejected", status_code=e.status_code)
+        return _dead_letter(f"SnapshotRejected_{e.status_code}", f"HTTP {e.status_code}: {e.body}")
+    except BackendUnavailableError as e:
+        bound_log.warning("message_abandoned", reason="backend_unavailable", error=str(e))
+        return _abandon("BackendUnavailable", str(e))
 
     row = next((r for r in snapshot.rows if r.id == target.stage_row_id), None)
     if row is None:
@@ -144,7 +153,18 @@ async def _process(message: QueueMessage, backend: BackendClient, runner: StageR
     if row.status == StageStatus.DONE:
         bound_log.info("already_applied")
         return _complete("AlreadyApplied")
+    return snapshot, row
 
+
+async def _generate_and_send(
+    message: QueueMessage,
+    snapshot: ProjectSnapshot,
+    row: StageRow,
+    backend: BackendClient,
+    runner: StageRunner,
+    bound_log,
+) -> Disposition:
+    target = message.targets[0]
     bound_log.info("generation_started")
     start = time.monotonic()
     try:

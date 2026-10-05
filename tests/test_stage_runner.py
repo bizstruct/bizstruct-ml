@@ -223,3 +223,83 @@ async def test_a_generator_that_returns_no_artifacts_fails_the_row():
     r = StageRunner({Stage.EMPATHY_MAP: EmptyGenerator()}, FakeLLM([empathy_generated()]), ConsistencyJudge(FakeJudgeModel()), retry_wait=0)
     outcome = await run(r)
     assert not outcome.success and "no artifacts" in outcome.failure.message  # type: ignore[union-attr]
+
+
+# --- degenerate-text validation between generate_structured and to_artifacts -----------------
+
+from bizstruct_domain.schemas import EmpathyMapGenerated  # noqa: E402
+
+
+def empathy_with(**overrides) -> EmpathyMapGenerated:
+    return empathy_generated().model_copy(update=overrides)
+
+
+async def test_degenerate_text_retries_like_a_schema_error():
+    bad = empathy_with(pains=["这是一个错误的输出这是一个错误的输出"])  # CJK: disallowed script
+    llm = FakeLLM([bad, empathy_generated("Good")])
+    outcome = await run(runner(llm))
+    assert outcome.success and len(llm.calls) == 2
+    assert outcome.artifacts[0].data["persona_name"] == "Good"
+
+
+async def test_degenerate_text_fails_the_row_when_retries_run_out():
+    bad = empathy_with(says_and_does=["ok ok ok ok ok ok ok ok ok ok ok ok ok ok"] + ["!!!!!!!!!!!!!!!"])
+    llm = FakeLLM([bad])
+    outcome = await run(runner(llm))
+    assert not outcome.success and outcome.artifacts == []
+    assert outcome.failure is not None and outcome.failure.code == StageErrorCode.GENERATION_FAILED
+    assert "degenerate text detected" in outcome.failure.message and "says_and_does" in outcome.failure.message
+    assert len(llm.calls) == 3  # settings.llm_max_retries + 1
+
+
+async def test_to_artifacts_is_not_reached_for_degenerate_text():
+    reached = []
+
+    class Spy(EmpathyMapTestGenerator):
+        def to_artifacts(self, generated, ctx):
+            reached.append(generated.persona_name)
+            return super().to_artifacts(generated, ctx)
+
+    bad = empathy_with(persona_name="Bad", pains=["这是一个错误的输出这是一个错误的输出"])
+    r = StageRunner({Stage.EMPATHY_MAP: Spy()}, FakeLLM([bad, empathy_generated("Good")]), ConsistencyJudge(FakeJudgeModel()), retry_wait=0)
+    await run(r)
+    assert reached == ["Good"]
+
+
+async def test_the_language_check_uses_the_language_the_runner_was_given():
+    row = empathy_row()
+    english = FakeLLM([empathy_generated()])
+    ukrainian_run = await runner(english).run(row, snapshot_for(row, brief_row()), "uk")  # English text, uk expected
+    assert not ukrainian_run.success and "language_mismatch" in ukrainian_run.failure.message  # type: ignore[union-attr]
+    ok = await runner(FakeLLM([empathy_generated()])).run(row, snapshot_for(row, brief_row()), "en")
+    assert ok.success
+
+
+async def test_non_prose_fields_are_exempt_from_the_language_check():
+    # a Latin persona name in a uk project must not fail the row (capitalized foreign words are neutral)
+    ukrainian = EmpathyMapGenerated(
+        persona_name="Olena Kovalenko",
+        persona_demographics="34 роки, живе у великому місті, двоє дітей",
+        sees=["Рекламу сервісів доставки продуктів щодня"],
+        hears=["Подруги хвалять фермерські набори продуктів"],
+        thinks_and_feels=["Турбується про свіжість продуктів у кошику"],
+        says_and_does=["Замовляє продукти онлайн майже щотижня"],
+        pains=["Ненадійні вікна доставки та пізні замовлення"],
+        gains=["Свіжі місцеві продукти без зайвих поїздок"],
+    )
+    row = empathy_row()
+    outcome = await runner(FakeLLM([ukrainian])).run(row, snapshot_for(row, brief_row()), "uk")
+    assert outcome.success
+
+
+async def test_log_only_text_findings_do_not_retry_or_fail(monkeypatch):
+    from bizstruct_ml.core import stage_runner as module
+    from bizstruct_ml.validation.degenerate_text import TextViolation
+
+    monkeypatch.setattr(
+        module, "validate_block_text",
+        lambda *a, **k: [TextViolation("pains[0]", "truncation_near_max_length", "d", retry_worthy=False)],
+    )
+    llm = FakeLLM([empathy_generated()])
+    outcome = await run(runner(llm))
+    assert outcome.success and len(llm.calls) == 1

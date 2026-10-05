@@ -6,7 +6,9 @@ the loop around it:
 
 1. build the context from the row's refs and ask the LLM for the stage's
    generation contract;
-2. convert with the persisted model's `from_generated` (the generator derives ids
+2. check the text for degeneration; a retry-worthy finding retries like a schema
+   error and fails the row once retries run out;
+   convert with the persisted model's `from_generated` (the generator derives ids
    with `derive_artifact_id`; the LLM never writes an id);
 3. run the deterministic rules; if any is an error, regenerate with the violation
    messages as feedback, at most `MAX_CONSISTENCY_RETRIES` times. Warnings never
@@ -45,6 +47,7 @@ from bizstruct_ml.judge.base import ConsistencyJudge
 from bizstruct_ml.llm.client import LLMError
 from bizstruct_ml.llm.retry import retry_async
 from bizstruct_ml.observability import tracing
+from bizstruct_ml.validation.degenerate_text import DegenerateTextError, validate_block_text
 
 log = structlog.get_logger()
 
@@ -174,7 +177,7 @@ class StageRunner:
                 models = await self._generate(generator, ctx, contract, feedback, retries)
             except ContextError as e:
                 return self._failed(f"context: {e}")
-            except (LLMError, ValueError) as e:
+            except (LLMError, ValueError, DegenerateTextError) as e:
                 return self._failed(str(e))
 
             with tracing.span("consistency_rules"):
@@ -220,6 +223,22 @@ class StageRunner:
             ) as span:
                 generated = await self._llm.generate_structured(messages, contract)
                 span.update(output=generated.model_dump(mode="json"), usage_details=self._llm.last_usage)
+            # Pydantic cannot see a valid-but-degenerate string (wrong script, padding,
+            # repeated runs). A retry-worthy finding retries like a schema error and,
+            # when retries run out, fails the row. Every finding goes on the span.
+            with tracing.span("validate_text") as text_span:
+                findings = validate_block_text(contract, generated.model_dump(mode="json"), ctx.language)
+                text_span.update(
+                    metadata={
+                        "violations": [
+                            {"field": v.field_path, "kind": v.kind, "detail": v.detail, "retry_worthy": v.retry_worthy}
+                            for v in findings
+                        ]
+                    }
+                )
+                retry_worthy = [v for v in findings if v.retry_worthy]
+                if retry_worthy:
+                    raise DegenerateTextError(retry_worthy)
             models = generator.to_artifacts(generated, ctx)
             if not models:
                 raise ValueError(f"generator for {ctx.row.stage.value} produced no artifacts")
@@ -231,7 +250,7 @@ class StageRunner:
 
         return await retry_async(
             attempt,
-            retry_on=(LLMError, ValueError),  # pydantic's ValidationError is a ValueError
+            retry_on=(LLMError, ValueError, DegenerateTextError),  # pydantic's ValidationError is a ValueError
             wait_min=self._retry_wait,
             wait_max=self._retry_wait,
         )
