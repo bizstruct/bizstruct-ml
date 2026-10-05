@@ -34,12 +34,13 @@ from bizstruct_domain.schemas import (
     StageErrorCode,
     StageFailure,
     StageRow,
+    derive_artifact_id,
     parse_artifact,
 )
 from pydantic import BaseModel, ConfigDict
 
 from bizstruct_ml.core.consistency import build_report, run_deterministic, run_judge
-from bizstruct_ml.core.context import ContextError, gather_context, rows_by_id
+from bizstruct_ml.core.context import ContextError, gather_closure, gather_context, rows_by_id
 from bizstruct_ml.judge.base import ConsistencyJudge
 from bizstruct_ml.llm.client import LLMError
 from bizstruct_ml.llm.retry import retry_async
@@ -73,6 +74,8 @@ class StageContext(BaseModel):
     row: StageRow
     # Artifacts of the rows in row.refs, labelled by stage.
     artifacts: dict[Stage, list[BaseModel]]
+    # Artifacts of every row reachable through refs (transitively), labelled by stage.
+    closure: dict[Stage, list[BaseModel]] = {}
 
 
 class StageGenerator(ABC):
@@ -102,6 +105,13 @@ class RunOutcome(BaseModel):
     @property
     def success(self) -> bool:
         return self.failure is None
+
+
+def _record(row: StageRow, artifact_type: ArtifactType, model: BaseModel) -> ArtifactRecord:
+    """The wire record of a persisted artifact. Most models carry their own `id`;
+    `Brief` has none, so its record id is derived like any other (index 0)."""
+    artifact_id = getattr(model, "id", None) or derive_artifact_id(row.id, artifact_type, 0)
+    return ArtifactRecord(id=artifact_id, type=artifact_type, data=model.model_dump(mode="json"))
 
 
 def _feedback_message(messages: Sequence[str]) -> dict:
@@ -151,6 +161,7 @@ class StageRunner:
                 language=language,
                 row=row,
                 artifacts=gather_context(row, rows),
+                closure=gather_closure(row, rows),
             )
         except ContextError as e:
             return self._failed(f"context: {e}")
@@ -161,6 +172,8 @@ class StageRunner:
         while True:
             try:
                 models = await self._generate(generator, ctx, contract, feedback, retries)
+            except ContextError as e:
+                return self._failed(f"context: {e}")
             except (LLMError, ValueError) as e:
                 return self._failed(str(e))
 
@@ -174,12 +187,12 @@ class StageRunner:
             log.info("consistency_retry", row_id=row.id, stage=row.stage.value, retry=retries, errors=len(errors))
 
         fresh = [m for _, m in models]
-        reports, unavailable = await run_judge(row, fresh, rows, self._judge, self._checks)
+        records = [_record(row, t, m) for t, m in models]
+        reports, unavailable = await run_judge(
+            row, fresh, rows, self._judge, self._checks, artifact_ids=[r.id for r in records]
+        )
         return RunOutcome(
-            artifacts=[
-                ArtifactRecord(id=m.id, type=t, data=m.model_dump(mode="json"))  # type: ignore[attr-defined]
-                for t, m in models
-            ],
+            artifacts=records,
             consistency=build_report(violations, reports, unavailable),
             consistency_retries=retries,
         )
@@ -213,9 +226,7 @@ class StageRunner:
             # Validate what be will validate, so a bad artifact is a generation
             # failure here and not a 422 (and a dead-lettered message) there.
             for artifact_type, model in models:
-                parse_artifact(
-                    ArtifactRecord(id=model.id, type=artifact_type, data=model.model_dump(mode="json"))  # type: ignore[attr-defined]
-                )
+                parse_artifact(_record(ctx.row, artifact_type, model))
             return models
 
         return await retry_async(

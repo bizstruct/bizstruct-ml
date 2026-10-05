@@ -71,12 +71,15 @@ async def run_judge(
     rows: Mapping[str, StageRow],
     judge: ConsistencyJudge,
     checks: Sequence[JudgeCheck] = JUDGE_CHECKS,
+    *,
+    artifact_ids: Sequence[str],
 ) -> tuple[list[ConsistencyReport], list[ConsistencyViolation]]:
     """Run every applicable judge check.
 
     Returns the judge's reports and, for each check whose judge was
-    unavailable, a warning violation `judge_unavailable:<check_id>`: the stage
-    still succeeds, the gap is visible in the report.
+    unavailable, a warning violation `judge_unavailable:<check_id>` citing
+    `artifact_ids` (the fresh artifacts' record ids): the stage still succeeds,
+    the gap is visible in the report.
     """
     reports: list[ConsistencyReport] = []
     unavailable: list[ConsistencyViolation] = []
@@ -91,7 +94,7 @@ async def run_judge(
                         rule_id=f"judge_unavailable:{check.id}",
                         severity="warning",
                         message=f"Judge check could not run: {e}",
-                        artifact_ids=[getattr(a, "id") for a in fresh_artifacts],
+                        artifact_ids=list(artifact_ids),
                     )
                 )
     return reports, unavailable

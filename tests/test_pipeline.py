@@ -178,10 +178,9 @@ async def test_hook_response_codes(post_status, action, reason):
     assert (disposition.action, disposition.reason) == (action, reason)
 
 
-def test_the_worker_starts_with_no_generators_registered():
-    from bizstruct_ml.strategies import pipeline
+def test_the_worker_starts_and_rejects_stages_that_have_no_generator_yet():
     from tests.test_judge_factory import make_settings
 
-    assert pipeline.STAGE_GENERATORS == {}
     runner_ = build_runner(make_settings(judge_provider="fake"))
-    assert not runner_.has_generator(Stage.BRIEF)
+    assert runner_.has_generator(Stage.BRIEF) and runner_.has_generator(Stage.IDEATION)
+    assert not runner_.has_generator(Stage.PATTERNS)

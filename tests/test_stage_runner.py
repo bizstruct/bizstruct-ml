@@ -201,3 +201,25 @@ async def test_a_conversion_validation_error_is_retried_with_a_new_llm_call():
     r = StageRunner({Stage.EMPATHY_MAP: FlakyGenerator()}, llm, ConsistencyJudge(FakeJudgeModel()), retry_wait=0)
     outcome = await run(r)
     assert outcome.success and len(llm.calls) == 2
+
+
+async def test_an_artifact_that_be_would_reject_fails_the_row_here():
+    class InvalidGenerator(EmpathyMapTestGenerator):
+        def to_artifacts(self, generated, ctx):
+            # built without validation: the data no longer satisfies the persisted model
+            return [(ArtifactType.EMPATHY_MAP, EmpathyMap.model_construct(id="e1", project_id="p", persona_name="x"))]
+
+    llm = FakeLLM([empathy_generated()])
+    r = StageRunner({Stage.EMPATHY_MAP: InvalidGenerator()}, llm, ConsistencyJudge(FakeJudgeModel()), retry_wait=0)
+    outcome = await run(r)
+    assert not outcome.success and outcome.artifacts == []
+
+
+async def test_a_generator_that_returns_no_artifacts_fails_the_row():
+    class EmptyGenerator(EmpathyMapTestGenerator):
+        def to_artifacts(self, generated, ctx):
+            return []
+
+    r = StageRunner({Stage.EMPATHY_MAP: EmptyGenerator()}, FakeLLM([empathy_generated()]), ConsistencyJudge(FakeJudgeModel()), retry_wait=0)
+    outcome = await run(r)
+    assert not outcome.success and "no artifacts" in outcome.failure.message  # type: ignore[union-attr]
