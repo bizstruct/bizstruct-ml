@@ -9,5 +9,8 @@ os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com")
 os.environ.setdefault("AZURE_OPENAI_API_KEY", "test-openai-key")
 os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 os.environ.setdefault("AZURE_OPENAI_API_VERSION", "2024-10-21")
-os.environ.setdefault("WEBPUBSUB_CONNECTION_STRING", "Endpoint=https://test.webpubsub.azure.com;AccessKey=dGVzdA==;Version=1.0;")
-os.environ.setdefault("WEBPUBSUB_HUB", "projects")
+
+# Tests never talk to the network. A developer's real .env may enable Langfuse;
+# empty values here win over .env, so no test ever sends a trace.
+for _name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+    os.environ[_name] = ""
