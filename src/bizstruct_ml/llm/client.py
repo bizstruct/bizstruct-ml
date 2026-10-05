@@ -4,6 +4,12 @@ from pydantic import BaseModel
 from bizstruct_ml.config import settings
 
 
+# Model family of the generator. The judge must come from a different family
+# (see bizstruct_ml.judge.guard); both the plain and the Azure OpenAI clients
+# below serve OpenAI models.
+GENERATOR_FAMILY = "openai"
+
+
 class LLMError(Exception):
     pass
 
