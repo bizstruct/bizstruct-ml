@@ -173,3 +173,15 @@ def test_degenerate_text_error_message_lists_only_retry_worthy():
     assert "a" in str(err)
     assert "b" not in str(err)
     assert err.violations == violations
+
+
+def test_breakeven_formula_is_exempt_but_other_business_case_prose_is_not():
+    from bizstruct_domain.schemas import BusinessCaseGenerated
+
+    fields = BusinessCaseGenerated.model_fields
+    assert "breakeven_formula" in fields and "market_benchmarks" in fields
+    english = "fixed costs divided by contribution margin per customer"
+    data = {"breakeven_formula": english, "market_benchmarks": english}
+    kinds = {(v.field_path, v.kind) for v in validate_block_text(BusinessCaseGenerated, data, "uk")}
+    assert ("breakeven_formula", "language_mismatch") not in kinds
+    assert ("market_benchmarks", "language_mismatch") in kinds

@@ -248,3 +248,36 @@ async def test_language_comes_from_the_snapshot_not_the_message():
 
     await handle_message(message, backend.client(), runner(llm))
     assert "Ukrainian" in llm.calls[0]["messages"][0]["content"]
+
+
+async def test_english_category_labels_pass_the_text_check_in_a_ukrainian_project():
+    backend = FakeBackend(language="uk")
+    ready_empathy(backend)
+    scenario = SCENARIO.model_copy(update={
+        "situation_narrative": "Олена в п'ятницю ввечері замовляє фермерський набір продуктів через застосунок.",
+        "open_questions": ["Яке вікно доставки їй підходить найкраще?"],
+    })  # channel_type / relationship_type stay English labels
+    llm = FakeLLM([scenario])
+    result = await run_row(backend, "row_customer_scenario_0", llm)
+    assert result.status == "success" and len(llm.calls) == 1
+    assert result.artifacts[0].data["channel_type"] == "digital-self-service"
+
+
+async def test_trace_metadata_uses_the_snapshot_language_not_the_message_language(monkeypatch):
+    import contextlib
+
+    from bizstruct_ml.observability import tracing
+    from bizstruct_ml.strategies.pipeline import handle_message
+
+    seen: list[dict] = []
+
+    @contextlib.contextmanager
+    def fake_trace(**kwargs):
+        seen.append(kwargs)
+        yield tracing.NOOP
+
+    monkeypatch.setattr(tracing, "trace_block_generation", fake_trace)
+    backend = FakeBackend(language="uk")
+    message = backend.message_for("row_brief_0").model_copy(update={"language": "en"})
+    await handle_message(message, backend.client(), runner(FakeLLM([brief_with(["Міські батьки"])])))
+    assert [k["language"] for k in seen] == ["uk"]

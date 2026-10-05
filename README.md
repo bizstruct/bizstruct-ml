@@ -90,6 +90,8 @@ JUDGE_ENDPOINT=... JUDGE_API_KEY=... JUDGE_DEPLOYMENT=... uv run python scripts/
 JUDGE_ENDPOINT=... JUDGE_API_KEY=... JUDGE_DEPLOYMENT=... uv run pytest -m live   # same call as a test
 ```
 
+First contact of the slice 1 prompts and generation schemas with the real generator (billable; run by hand): `uv run python scripts/slice1_dry_run.py "<idea>"` (`--language uk`; `--probe-schemas` checks which generation schemas the API accepts). It runs the in-memory fake backend with the real generator client and prints every artifact and the token usage; the judge is the real one if `JUDGE_*` are set. The `-m live` test wraps it.
+
 ## Queue Configuration Requirements
 
 The Service Bus queue **must** be configured with:

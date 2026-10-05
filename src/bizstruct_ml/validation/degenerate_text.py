@@ -12,7 +12,7 @@ JSON Schema violation, so it reaches storage unless something else checks
 for it.
 
 Three violation kinds are retry-worthy (raise `DegenerateTextError`, which
-`generators/base.py` adds to the same tenacity retry loop as
+`core/stage_runner.py` adds to the same retry loop as
 `ValidationError`/`LLMError`): `language_mismatch`, `disallowed_script`,
 `repeated_sequence`. A fourth, `truncation_near_max_length`, is logged
 only — it's the model legitimately running into a length ceiling, not
@@ -27,7 +27,7 @@ Language check (part E follow-up): projects are single-language now (no
 more `_uk`/`_en` field pairs — see bizstruct_domain's block modules), so
 the expected language isn't inferred from a field-name suffix anymore. The
 caller passes it in explicitly (`expected_language`, the same "uk"/"en"
-value used to build the prompt — see generators/base.py), and every text
+value used to build the prompt — see core/stage_runner.py), and every text
 field in the block is checked against that one language uniformly.
 
 Language check, threshold follow-up: the live language-comparison run
@@ -35,8 +35,8 @@ Language check, threshold follow-up: the live language-comparison run
 `scenario.metrics.after.label` measured 49% Cyrillic and tripped the flat
 55% threshold, purely because it contained several capitalized
 Latin acronyms/brand-name words ("ACV", "SaaS", "Insight Governance
-Lab"). Two changes address this (see scripts/calibrate_language_threshold.py
-for the before/after counts they were tuned against): (1) "neutral"
+Lab"). Two changes address this (tuned against the live language-comparison
+run; the calibration script was removed with the old block generators): (1) "neutral"
 tokens — a capitalized word or a short (<=3 char) lowercase run in the
 *foreign* script relative to `expected_language` (proper nouns, acronyms,
 unit/currency abbreviations) — are excluded from both the numerator and
@@ -65,7 +65,7 @@ from pydantic.fields import FieldInfo
 
 # ── thresholds — calibrated against experiments/results/ (4 models × 5
 # ideas × 8 blocks each, back when fields were still _uk/_en pairs); see
-# scripts/calibrate_degenerate_text.py and the task summary for the
+# the old calibration script (removed with the block generators) for the
 # per-model violation counts these were tuned against.
 
 # Fraction of *alphabetic* characters that must belong to the expected
@@ -122,13 +122,19 @@ def _neutral_token_spans(text: str, expected_language: str) -> set[int]:
             spans.update(range(m.start(), m.end()))
     return spans
 
+# Fields that are not prose and so say nothing about the language of the text.
 # `title` fields consistently mix a native descriptor with an English
-# brand-style product name by design across this dataset (e.g. "Інституційна
-# ліцензія · Campus SkillSprint") — calibration against experiments/results/
-# found this pattern alone would trip the ratio check regardless of the
-# project's language, with zero true positives. Every other field (prose:
-# rationale, premise, description, summary, ...) is still checked.
-_LANGUAGE_CHECK_EXEMPT_FIELDS = {"title"}
+# brand-style product name by design (e.g. "Інституційна ліцензія · Campus
+# SkillSprint") — calibration against experiments/results/ found this pattern
+# alone would trip the ratio check regardless of the project's language, with
+# zero true positives. From the current generation contracts:
+# `channel_type`/`relationship_type` are short lowercase category labels the
+# scenario prompt asks for in English, and `breakeven_formula` is a formula.
+# (Names such as `persona_name` and the "S1"-style segment aliases need no
+# entry: capitalized foreign-script words are neutral tokens, and aliases are
+# too short to check.) Every other field (prose: rationale, narrative,
+# pains, ...) is still checked.
+_LANGUAGE_CHECK_EXEMPT_FIELDS = {"title", "channel_type", "relationship_type", "breakeven_formula"}
 
 # Unicode ranges that must never appear in uk/en business content — the
 # single most reliable degeneration signal observed (see brief).
@@ -331,7 +337,7 @@ def validate_block_text(schema: type[BaseModel], data: dict, expected_language: 
     """Walks `data` against `schema`'s field structure (recursing into
     nested models and lists) and returns every violation found — both
     retry-worthy and log-only. Does not raise; callers decide what to do
-    (see generators/base.py). `expected_language` is the same "uk"/"en"
+    (see core/stage_runner.py). `expected_language` is the same "uk"/"en"
     value the prompt was built with (see llm/prompts/*.py's `lang`)."""
     violations: list[TextViolation] = []
     _walk_model(schema, data, "", expected_language, violations)
