@@ -97,14 +97,16 @@ def gather_inputs(
     `fresh_artifacts` stand in for whatever `fresh_row` held before: the row was just
     (re)generated, so its stored artifacts are stale and never read from `rows`.
 
-    - `ONE`: the fresh artifacts of the type plus those of the rows the fresh row's `refs`
-      name (any key), without the closure.
     - `MANY`, `EACH`, `FINAL`: the fresh artifacts of the type plus, for each stage that can hold
       the type (`ARTIFACT_HOLDERS`, a Canvas lives in `canvas` and `swot_errc_cycle`): the
       instances of the rows `refs` names under that stage (every one must exist, be DONE and
       hold artifacts, else `ContextError`; the group is defined by the row's refs), otherwise
       those of the DONE rows of that stage in the closure. `FINAL` also needs the Swots of the
       cycle, gathered the same way.
+    - `ONE`: the fresh artifacts of the type plus those of the rows the fresh row's `refs` name
+      (any key). If that yields NO candidate, the same holder rule as above applies (a row whose
+      refs name no holder stage of the type falls back to the closure; one that names a holder
+      stage must have usable rows or it is a `ContextError`). Several candidates stay an error.
 
     Raises `ContextError` when a required input is missing or a `ONE` is ambiguous.
     """
@@ -120,9 +122,11 @@ def gather_inputs(
             if spec.arity is Arity.ONE:
                 for ref in direct:
                     pool.extend(_of_type(parse_row_artifacts(ref), artifact))
-            else:
+            if spec.arity is not Arity.ONE or not pool:
+                # MANY, EACH, FINAL always; ONE only when its own pool found nothing (ADR-0001)
                 for holder in ARTIFACT_HOLDERS[artifact]:
                     if fresh_row.refs.get(holder):
+                        # the row names this holder stage: its rows must be usable, else ContextError
                         pool.extend(_of_type(_direct_artifacts(fresh_row, holder, rows), artifact))
                     else:
                         for other in done:

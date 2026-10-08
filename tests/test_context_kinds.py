@@ -172,3 +172,90 @@ def test_every_registered_check_is_gatherable_on_a_finished_cycle_for_the_rows_t
     swot_input = (check.inputs[0],)
     ((swot,),) = gather_inputs(swot_input, fresh_row=fresh, fresh_artifacts=[], rows=rows_by_id([canvas_row, cycle_row, fresh]))
     assert swot.canvas_version == 2  # the best version, not the last one
+
+
+# -- ONE falls back to the closure (ADR-0001, same holder rule as the other kinds) ------------------------------------
+
+
+def cycle_row_of_a_finished_project(shape=None):
+    """A fake backend run through canvas, plus a RUNNING cycle row that refs only its canvas row."""
+    import asyncio
+
+    from tests.support.fake_backend import FakeBackend
+    from tests.support.projects import SPLIT_IN_TWO, scripted_llm, stage_runner
+
+    backend = FakeBackend(through=Stage.CANVAS)
+    asyncio.run(backend.run_to_completion(stage_runner(scripted_llm(shape or SPLIT_IN_TWO))))
+    canvas_row = backend.rows_of(Stage.CANVAS)[0]
+    cycle = StageRow(id="row_cycle_0", stage=Stage.SWOT_ERRC_CYCLE, status=StageStatus.RUNNING, attempt_id="a", refs={Stage.CANVAS: [canvas_row.id]})
+    backend.rows[cycle.id] = cycle
+    return backend, cycle
+
+
+PATTERNS_ONE = RuleInput(artifact=A.PATTERNS, arity=Arity.ONE)
+
+
+def test_patterns_on_a_cycle_row_binds_through_the_closure():
+    backend, cycle = cycle_row_of_a_finished_project()
+    rows = rows_by_id(backend.closure_of(cycle.id))
+    ((patterns,),) = gather_inputs([PATTERNS_ONE], fresh_row=cycle, fresh_artifacts=[], rows=rows)
+    assert len(patterns.groups) == 2
+
+
+def test_the_cycle_rows_consistency_rules_run_instead_of_crashing():
+    from bizstruct_domain.schemas import CONSISTENCY_RULES
+
+    backend, cycle = cycle_row_of_a_finished_project()
+    rows = rows_by_id(backend.closure_of(cycle.id))
+    rule = next(r for r in CONSISTENCY_RULES if r.id == "canvas_group_id_is_known")
+    canvas = swotless_canvas_of(backend)
+    bad = canvas.model_copy(update={"id": "v2", "version": 2, "group_id": "dangling"})
+    violations = run_deterministic(cycle, [bad], rows, [rule])
+    assert [v.artifact_ids[0] for v in violations] == ["v2"]
+
+
+def swotless_canvas_of(backend):
+    from bizstruct_domain.schemas import parse_artifact
+
+    return parse_artifact(backend.rows_of(Stage.CANVAS)[0].artifacts[0])
+
+
+def test_several_patterns_candidates_in_the_closure_are_an_error():
+    backend, cycle = cycle_row_of_a_finished_project()
+    (patterns_row,) = backend.rows_of(Stage.PATTERNS)
+    twin = patterns_row.model_copy(update={"id": "row_patterns_twin"})
+    canvas_row = backend.rows_of(Stage.CANVAS)[0]
+    canvas_row.refs = {**canvas_row.refs, Stage.PATTERNS: [patterns_row.id]}  # the twin is only in the snapshot
+    rows = {**rows_by_id(backend.closure_of(cycle.id)), twin.id: twin}
+    with pytest.raises(ContextError, match="ambiguous input: 2 patterns instances"):
+        gather_inputs([PATTERNS_ONE], fresh_row=cycle, fresh_artifacts=[], rows=rows)
+
+
+@pytest.mark.parametrize("damage", ["unfinished", "no_artifacts", "missing"])
+def test_a_named_holder_row_that_is_not_usable_keeps_raising(damage):
+    backend, cycle = cycle_row_of_a_finished_project()
+    (patterns_row,) = backend.rows_of(Stage.PATTERNS)
+    cycle.refs = {**cycle.refs, Stage.PATTERNS: [patterns_row.id]}  # now the row names a holder stage of patterns
+    rows = rows_by_id(backend.closure_of(cycle.id))
+    if damage == "unfinished":
+        rows[patterns_row.id] = patterns_row.model_copy(update={"status": StageStatus.RUNNING, "artifacts": []})  # a row still being generated holds nothing yet
+    elif damage == "no_artifacts":
+        rows[patterns_row.id] = patterns_row.model_copy(update={"artifacts": []})
+    else:
+        del rows[patterns_row.id]
+    with pytest.raises(ContextError, match=patterns_row.id):
+        gather_inputs([PATTERNS_ONE], fresh_row=cycle, fresh_artifacts=[], rows=rows)
+
+
+def test_a_usable_named_holder_row_is_read_directly_not_from_the_closure():
+    backend, cycle = cycle_row_of_a_finished_project()
+    (patterns_row,) = backend.rows_of(Stage.PATTERNS)
+    cycle.refs = {**cycle.refs, Stage.PATTERNS: [patterns_row.id]}
+    rows = rows_by_id(backend.closure_of(cycle.id))
+    ((patterns,),) = gather_inputs([PATTERNS_ONE], fresh_row=cycle, fresh_artifacts=[], rows=rows)
+    assert len(patterns.groups) == 2
+
+
+def test_a_one_input_found_directly_never_consults_the_closure():
+    # patterns found directly is not duplicated by the closure's copy (that would be an ambiguity error)
+    test_a_usable_named_holder_row_is_read_directly_not_from_the_closure()

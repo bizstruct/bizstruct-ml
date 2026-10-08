@@ -90,11 +90,11 @@ def test_one_input_is_ambiguous_when_two_direct_refs_match():
         gather_inputs([ONE_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
 
 
-def test_one_input_ignores_artifacts_that_are_not_directly_reachable():
-    # empathy_map is in the closure but not a direct ref of the fresh row
+def test_one_input_whose_named_holder_row_is_missing_is_an_error_not_a_closure_fallback():
+    # the row names an empathy_map row that is not in the snapshot; the one that is must not stand in for it
     fresh = scenario_row("row_cs_0", "row_em_other")
     rows = rows_by_id([brief_row(), done_empathy_row("row_em_0"), fresh])
-    with pytest.raises(ContextError, match="no empathy_map instance"):
+    with pytest.raises(ContextError, match="row_em_other.*not in the snapshot"):
         gather_inputs([ONE_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
 
 
