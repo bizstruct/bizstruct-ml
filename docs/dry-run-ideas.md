@@ -11,3 +11,4 @@ The exact texts, kept so that runs can be repeated. The three ideas of the slice
 | photo | en | two-sided marketplace, expected multi-sided | A marketplace where independent photographers rent hourly studio space from studio owners. |
 
 Slice 2 (patterns, canvas) ran all five on 2026-10-08. Slice 3 (swot_errc_cycle) ran `farm`, `photo` and `split`.
+Slice 4 (storytelling, future_scenario, pitch) ran `farm`, `photo` and `split`. In that run `split` and `photo` were each grouped into ONE canvas group (diversified / multi_sided), so no live run produced two canvases.

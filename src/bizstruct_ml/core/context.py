@@ -11,6 +11,8 @@ from bizstruct_domain.schemas import (
     ARTIFACT_HOLDERS,
     ARTIFACT_MODELS,
     Arity,
+    Canvas,
+    Swot,
     ArtifactType,
     InputBindingError,
     RuleInput,
@@ -152,3 +154,18 @@ def _direct_artifacts(fresh_row: StageRow, stage: Stage, rows: Mapping[str, Stag
             raise ContextError(f"row {fresh_row.id} refs {stage.value} row {row_id}, which has no artifacts")
         artifacts.extend(parse_row_artifacts(ref))
     return artifacts
+
+
+def gather_final(row: StageRow, rows: Mapping[str, StageRow]) -> tuple[Canvas, Swot]:
+    """The FINAL canvas and the FINAL swot of the cycle `row` descends from (storytelling, future_scenario, pitch).
+
+    Derived by the domain (`select_final_version` over the Swots of the cycle row, via `bind_inputs`): v1 is read from
+    the canvas row through the closure, v2..v5 from the cycle row named in `refs`. Nothing is stored or flagged.
+    Raises `ContextError` when the cycle is incomplete (gap in the Swot versions, missing canvas)."""
+    ((canvas, swot),) = gather_inputs(
+        [RuleInput(artifact=ArtifactType.CANVAS, arity=Arity.FINAL), RuleInput(artifact=ArtifactType.SWOT, arity=Arity.FINAL)],
+        fresh_row=row,
+        fresh_artifacts=[],
+        rows=rows,
+    )
+    return canvas, swot

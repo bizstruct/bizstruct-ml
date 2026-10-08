@@ -107,3 +107,16 @@ async def test_the_script_counts_field_rule_retries_and_reports_the_threat_histo
     assert report["field_rule_retries"] == 1 and report["conversion_retries"] == 1
     histogram = report["cycles"][0]["threat_histogram"]
     assert len(histogram) == 2 and all(sum(h.values()) == 21 for h in histogram)
+
+
+async def test_the_script_runs_through_pitch_by_default_and_reports_a_completed_project(script, tmp_path, capsys):
+    from tests.support.projects import ONE
+
+    llm = scripted_llm(ONE, scores=(100, 90, 95))
+    out = tmp_path / "run.json"
+    code = await script.main("x", "en", str(out), inner=llm, judge=ConsistencyJudge(FakeJudgeModel([NO_FINDINGS]), retry_wait=0), judge_label="fake")
+    report = json.loads(out.read_text())
+    assert code == 0 and report["ok"] and report["project_status"] == "completed"
+    assert {"storytelling", "future_scenario", "pitch"} <= set(report["tokens_per_stage"])
+    printed = capsys.readouterr().out
+    assert "row_pitch_0" in printed and "customer/pitching_investors/text_and_image" in printed

@@ -106,9 +106,9 @@ async def test_more_than_one_target_is_dead_lettered_without_any_http():
 
 async def test_a_stage_without_a_generator_is_dead_lettered_with_a_reason():
     backend = default_backend()
-    disposition = await handle_message(message(stage=Stage.STORYTELLING), backend.client(), runner())
+    disposition = await handle_message(message(stage=Stage.ENVIRONMENT_SCAN), backend.client(), runner())
     assert disposition.action == Action.DEAD_LETTER and disposition.reason == "NoGenerator"
-    assert "storytelling" in disposition.description
+    assert "environment_scan" in disposition.description
     assert backend.gets == []
 
 
@@ -184,4 +184,4 @@ def test_the_worker_starts_and_rejects_stages_that_have_no_generator_yet():
     runner_ = build_runner(make_settings(judge_provider="fake"))
     assert runner_.has_generator(Stage.BRIEF) and runner_.has_generator(Stage.IDEATION)
     assert runner_.has_generator(Stage.PATTERNS) and runner_.has_generator(Stage.CANVAS)
-    assert runner_.has_generator(Stage.SWOT_ERRC_CYCLE) and not runner_.has_generator(Stage.STORYTELLING)
+    assert all(runner_.has_generator(s) for s in (Stage.SWOT_ERRC_CYCLE, Stage.STORYTELLING, Stage.FUTURE_SCENARIO, Stage.PITCH)) and not runner_.has_generator(Stage.ENVIRONMENT_SCAN)

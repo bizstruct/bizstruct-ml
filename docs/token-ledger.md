@@ -6,7 +6,7 @@ Tokens the generator model spent per stage, as measured so far. One row per stag
 - **The judge was the fake judge in every slice 2 measurement** (no `JUDGE_*` configured), so judge tokens are **not** counted anywhere in this file. When the real judge is configured they will need their own rows.
 - A row is the sum over all calls of that stage in one run; "calls" is the number of LLM calls (one per row plus any retry; there were no retries in these runs, so calls = rows).
 - Input grows with context: `patterns` and `canvas` read the upstream artifacts, and `patterns` grows with the number of segments.
-- Prompt versions: `brief` 1, `empathy_map` 2, `customer_scenario` 2, `ideation` 1, `patterns` 1, `canvas` 1.
+- Prompt versions: `brief` 1, `empathy_map` 2, `customer_scenario` 2, `ideation` 1, `patterns` 1, `canvas` 1 (the slice 4 stages are in their own section below).
 - Ukrainian costs more input and output than English for the same structure (see the `beer (UK)` rows).
 
 ## Measured per stage, slice 1 and slice 2 stages (2026-10-08, `scripts/slice2_dry_run.py`)
@@ -144,6 +144,32 @@ All ideas pooled:
 ### ERRC v2 in the same 18 runs
 
 No move broke the field rule of an action (`new_text` / `target_card_text` per action) and no conversion or structure retry of any kind happened: **0 field-rule retries and 0 conversion retries in 18 runs** (the retry path, whose message names the action and the field, e.g. "new_text must be provided when action is RAISE.", is covered by tests only). No `eliminate` move was proposed in any of the 18 runs (before: 29 raise, 13 reduce, 16 create; after: 39 raise, 18 reduce, 23 create). In iterations 2 and later, a reduce/raise targeted a card marked by the previous step in 1 of 11 cases (before) and 1 of 30 (after); in the earlier slice 3 runs (ERRC v1, text unchanged) the same card was raised in four consecutive iterations.
+
+## Slice 4: `storytelling`, `future_scenario`, `pitch` (2026-10-08, `scripts/slice2_dry_run.py`, three of the five earlier ideas, one run each)
+
+Whole pipeline through `pitch` against the fake backend, real generator, **fake judge** (no `JUDGE_*` configured), so judge tokens are not counted. Prompt versions: `storytelling` 1, `future_scenario` 1, `pitch` 1; `swot` 2 and `errc` 2 as in the follow-up above. No optional stage enabled; `project_status` on the fake backend reached `completed` in all three runs. **0 retries of any kind** (0 consistency, 0 field-rule, 0 conversion/structure) in all three runs.
+
+| stage | prompt version | idea | calls | input | output | total | wall-clock |
+|---|---|---|---|---|---|---|---|
+| storytelling | 1 | farm (EN) | 1 | 2,332 | 735 | 3,067 | 6.7 s |
+| storytelling | 1 | photo (EN) | 1 | 3,202 | 702 | 3,904 | 6.4 s |
+| storytelling | 1 | split (EN) | 1 | 3,130 | 714 | 3,844 | 6.9 s |
+| future_scenario | 1 | farm (EN) | 1 | 3,231 | 866 | 4,097 | 9.4 s |
+| future_scenario | 1 | photo (EN) | 1 | 3,348 | 1,039 | 4,387 | 11.4 s |
+| future_scenario | 1 | split (EN) | 1 | 3,310 | 1,023 | 4,333 | 12.0 s |
+| pitch | 1 | farm (EN) | 1 | 2,493 | 711 | 3,204 | 7.6 s |
+| pitch | 1 | photo (EN) | 1 | 2,670 | 839 | 3,509 | 9.1 s |
+| pitch | 1 | split (EN) | 1 | 2,644 | 830 | 3,474 | 8.3 s |
+
+Whole run (all stages, the earlier ones included):
+
+| idea | rows | LLM calls | total tokens | cycle: scores, final version |
+|---|---|---|---|---|
+| farm (EN) | 10 | 12 | 40,759 | [84, 154], 1 |
+| photo (EN) | 13 | 15 | 53,709 | [77, 103], 1 |
+| split (EN) | 13 | 17 | 63,523 | [113, 90, 183], 2 |
+
+The three new stages cost about 10.4k (farm), 11.8k (photo) and 11.7k (split) tokens, 18 to 25 % of a run; the cycle is still the largest single row (15.0k, 15.8k, 26.3k). The longest row is the cycle (54 s, 60 s, 94 s against a lock renewal of 900 s); storytelling, future_scenario and pitch take 6 to 12 s each. These are one run per idea, not an average: the earlier stages are generated again in every run, so the totals differ between runs of the same idea.
 
 ## Reported earlier: slice 1 run totals (no per-stage split was recorded)
 

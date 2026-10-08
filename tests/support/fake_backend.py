@@ -15,8 +15,13 @@ After each DONE canvas row, one `swot_errc_cycle` row (refs: that canvas row; th
 environment_scan row would be added only if the project enabled it, and no generator
 exists for it yet).
 
-`through` is the last stage the fake creates rows for: slice 1 tests keep the
-default (`ideation`), slice 2 passes `Stage.CANVAS`, slice 3 `Stage.SWOT_ERRC_CYCLE`.
+After each DONE cycle row, its `storytelling`, `future_scenario` and `pitch` rows (ADR-0011:
+storytelling and future_scenario ref the cycle row; pitch refs its storytelling row and the cycle row,
+plus the `team_info` row when the project enabled it; `instance_index` 0). A `team_info` row is user
+input: be creates it already DONE, so the fake does too when `Stage.TEAM_INFO` is enabled.
+
+`through` is the last stage the fake creates rows for: slice 1 tests keep the default (`ideation`),
+slice 2 passes `Stage.CANVAS`, slice 3 `Stage.SWOT_ERRC_CYCLE`, slice 4 `Stage.PITCH`.
 """
 
 import json
@@ -67,6 +72,8 @@ class FakeBackend:
         self._attempts = count(1)
         self._outbox: dict[str, QueueMessage] = {}
         self.add_row(Stage.BRIEF, 0, {})
+        if Stage.TEAM_INFO in self.enabled_optional:
+            self._add_team_info_row()
 
     # -- be's own bookkeeping ------------------------------------------------
 
@@ -78,6 +85,18 @@ class FakeBackend:
                        status=StageStatus.PENDING, refs=refs)
         self.rows[row.id] = row
         return row
+
+    def _add_team_info_row(self) -> None:
+        """User input: be creates the row already DONE with the artifact."""
+        from bizstruct_domain.schemas import ArtifactRecord, TeamInfo, TeamMember, derive_artifact_id
+
+        row = self.add_row(Stage.TEAM_INFO, 0, {})
+        info = TeamInfo(
+            id=derive_artifact_id(row.id, ArtifactType.TEAM_INFO, 0), project_id=PROJECT_ID,
+            members=[TeamMember(name="Dana Founder", role="CEO", relevant_experience="Ten years in food logistics.", key_competencies=["operations", "sales"])],
+        )
+        row.status, row.attempt_id = StageStatus.DONE, "user"
+        row.artifacts = [ArtifactRecord(id=info.id, type=ArtifactType.TEAM_INFO, data=info.model_dump(mode="json"))]
 
     def rows_of(self, stage: Stage) -> list[StageRow]:
         return sorted((r for r in self.rows.values() if r.stage == stage), key=lambda r: r.instance_index)
@@ -137,6 +156,22 @@ class FakeBackend:
                 r.refs.get(Stage.CANVAS) == [canvas_row.id] for r in self.rows_of(Stage.SWOT_ERRC_CYCLE)
             ):
                 self.add_row(Stage.SWOT_ERRC_CYCLE, 0, {Stage.CANVAS: [canvas_row.id]}, suffix=canvas_row.instance_index)
+        self._expand_after_cycle()
+
+    def _expand_after_cycle(self) -> None:
+        if self.through in (Stage.CANVAS, Stage.SWOT_ERRC_CYCLE):
+            return
+        team = self.rows_of(Stage.TEAM_INFO)
+        for cycle in self.rows_of(Stage.SWOT_ERRC_CYCLE):
+            if cycle.status != StageStatus.DONE or any(r.refs.get(Stage.SWOT_ERRC_CYCLE) == [cycle.id] for r in self.rows_of(Stage.STORYTELLING)):
+                continue
+            n = int(cycle.id.rsplit("_", 1)[1])
+            story = self.add_row(Stage.STORYTELLING, 0, {Stage.SWOT_ERRC_CYCLE: [cycle.id]}, suffix=n)
+            self.add_row(Stage.FUTURE_SCENARIO, 0, {Stage.SWOT_ERRC_CYCLE: [cycle.id]}, suffix=n)
+            refs = {Stage.STORYTELLING: [story.id], Stage.SWOT_ERRC_CYCLE: [cycle.id]}
+            if team and Stage.TEAM_INFO in self.enabled_optional:
+                refs[Stage.TEAM_INFO] = [team[0].id]
+            self.add_row(Stage.PITCH, 0, refs, suffix=n)
 
     def dispatch_ready(self) -> list[QueueMessage]:
         """Mark every ready row RUNNING with a fresh attempt and return its message."""

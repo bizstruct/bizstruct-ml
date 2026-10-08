@@ -1,6 +1,7 @@
-"""Slice 2/3 dry run: brief -> empathy maps -> scenarios/ideations -> patterns -> one canvas per group
--> (by default) one swot_errc_cycle row per canvas, with the REAL generator client against the
-in-memory fake backend (standing in for be). `--through canvas` stops after the canvases (slice 2).
+"""Slice 2-4 dry run: brief -> empathy maps -> scenarios/ideations -> patterns -> one canvas per group
+-> one swot_errc_cycle row per canvas -> (by default) storytelling, future_scenario and pitch per
+canvas, with the REAL generator client against the in-memory fake backend (standing in for be).
+`--through canvas` stops after the canvases (slice 2), `--through cycle` after the cycles (slice 3).
 
 The judge is the real one if JUDGE_* are configured (settings or environment), otherwise a
 `FakeJudgeModel` that finds nothing; the first line of the output says which.
@@ -25,14 +26,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # slice1_dry_run (sets the dummy environment on import)
 
-from bizstruct_domain.schemas import GENERATION_CONTRACTS, ArtifactType, CustomerScenario, Patterns, Stage, parse_artifact, select_final_version  # noqa: E402
+from bizstruct_domain.schemas import GENERATION_CONTRACTS, ArtifactType, CustomerScenario, Patterns, Stage, parse_artifact, project_status, select_final_version  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from slice1_dry_run import UsageLLM, build_judge  # noqa: E402
 
 from bizstruct_ml.core.stage_runner import RunOutcome, StageRunner  # noqa: E402
 from bizstruct_ml.llm.client import LLMClient  # noqa: E402
 from bizstruct_ml.config import settings as ml_settings  # noqa: E402
-from bizstruct_ml.stages import SLICE_3_GENERATORS  # noqa: E402
+from bizstruct_ml.stages import SLICE_4_GENERATORS  # noqa: E402
 from tests.support.fake_backend import FakeBackend  # noqa: E402
 
 STAGE_OF_CONTRACT = {c.__name__: stage for stage, contracts in GENERATION_CONTRACTS.items() for c in contracts}
@@ -163,12 +164,12 @@ def summarise(backend: FakeBackend, llm: TrackingLLM) -> dict:
     return summary
 
 
-async def main(idea: str, language: str, json_path: str | None, *, inner=None, judge=None, judge_label: str = "", through: Stage = Stage.SWOT_ERRC_CYCLE) -> int:
+async def main(idea: str, language: str, json_path: str | None, *, inner=None, judge=None, judge_label: str = "", through: Stage = Stage.PITCH) -> int:
     """`inner`, `judge` and `judge_label` are for the offline smoke test; by default the real ones are built."""
     llm = TrackingLLM(inner or LLMClient())
     if judge is None:
         judge, judge_label = build_judge()
-    runner = TrackingRunner(SLICE_3_GENERATORS, llm=llm, judge=judge)
+    runner = TrackingRunner(SLICE_4_GENERATORS, llm=llm, judge=judge)
     backend = FakeBackend(idea=idea, language=language, through=through)
     print(f"generator: {llm.model_name}   judge: {judge_label}   language: {language}\nidea: {idea}\n")
     await backend.run_to_completion(runner)
@@ -231,12 +232,36 @@ async def main(idea: str, language: str, json_path: str | None, *, inner=None, j
         for v in patterns_row.consistency.violations:
             print(f"  [{v.severity}] {v.rule_id}: {v.message}")
 
+    for row in backend.rows_of(Stage.STORYTELLING):
+        story = parse_artifact(row.artifacts[0]) if row.artifacts else None
+        if story is not None:
+            print(f"\n===== {row.id} [{row.status.value}]  {story.perspective.value}/{story.goal.value}/{story.format.value}")
+            print(f"  {story.narrative_text}")
+            print("  canvas_references: " + ", ".join(f"{r.section.value} ({r.note})" for r in story.canvas_references))
+    for row in backend.rows_of(Stage.FUTURE_SCENARIO):
+        future = parse_artifact(row.artifacts[0]) if row.artifacts else None
+        if future is not None:
+            print(f"\n===== {row.id} [{row.status.value}]")
+            print("  drivers: " + "; ".join(str(d.model_dump_json() if hasattr(d, "model_dump_json") else d) for d in future.uncertainty_drivers))
+            for v in future.variants:
+                print(f"  variant: {v.model_dump_json()}")
+    for row in backend.rows_of(Stage.PITCH):
+        pitch = parse_artifact(row.artifacts[0]) if row.artifacts else None
+        if pitch is not None:
+            print(f"\n===== {row.id} [{row.status.value}]  team_section {'present' if pitch.team_section else 'null'}, financial_analysis_section {'present' if pitch.financial_analysis_section else 'null'}")
+            print(f"  {pitch.model_dump_json(indent=1, exclude={'id'})}")
+        if row.consistency is not None:
+            for v in row.consistency.violations:
+                print(f"    [{v.severity}] {v.rule_id}: {v.message}")
+    status = project_status(list(backend.rows.values()), [])
+    print(f"\nproject_status on the fake backend (no optional stage enabled): {status}")
+
     failed = [r for r in backend.posted if r.status == "failed"]
     for result in failed:
         print(f"!!! {result.stage_row_id} FAILED: {result.error.message if result.error else ''}")
     ok = all(r.status.value == "done" for r in backend.rows.values()) and not failed
     if json_path:
-        Path(json_path).write_text(json.dumps({"idea": idea, "language": language, "judge": judge_label, "ok": ok, **summary,
+        Path(json_path).write_text(json.dumps({"idea": idea, "language": language, "judge": judge_label, "ok": ok, "project_status": status, **summary,
                                                "canvases": [r.artifacts[0].data for r in backend.rows_of(Stage.CANVAS) if r.artifacts]},
                                               ensure_ascii=False, indent=1))
     print(f"\nrows: {len(backend.rows)}  result: {'OK' if ok else 'PROBLEMS'}")
@@ -248,5 +273,7 @@ if __name__ == "__main__":
     parser.add_argument("idea")
     parser.add_argument("--language", default="en", choices=["en", "uk"])
     parser.add_argument("--json", dest="json_path")
+    parser.add_argument("--through", default="pitch", choices=["canvas", "cycle", "pitch"])
     args = parser.parse_args()
-    sys.exit(asyncio.run(main(args.idea, args.language, args.json_path)))
+    through = {"canvas": Stage.CANVAS, "cycle": Stage.SWOT_ERRC_CYCLE, "pitch": Stage.PITCH}[args.through]
+    sys.exit(asyncio.run(main(args.idea, args.language, args.json_path, through=through)))

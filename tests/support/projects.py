@@ -19,8 +19,17 @@ from bizstruct_domain.schemas import (
     Pattern,
     PatternsGenerated,
     PatternTag,
+    AdaptationQuestion,
     ERRCActionType,
     ErrcGenerated,
+    FutureScenarioGenerated,
+    FutureScenarioVariant,
+    PitchGenerated,
+    CanvasReference,
+    StorytellingFormat,
+    StorytellingGenerated,
+    StorytellingGoal,
+    StorytellingPerspective,
     ErrcMove,
     CanvasSection,
     PricingTier,
@@ -175,7 +184,40 @@ def default_moves(version: int) -> ErrcGenerated:
     ])
 
 
-def scripted_llm(shape: Shape, *, patterns: PatternsGenerated | None = None, canvas=None, scores=None, errc=None) -> FakeLLM:
+def story_generated(**overrides) -> StorytellingGenerated:
+    data = dict(
+        perspective=StorytellingPerspective.CUSTOMER, goal=StorytellingGoal.PITCHING_INVESTORS, format=StorytellingFormat.TEXT_AND_IMAGE,
+        narrative_text="Maya runs short of time every evening; the offer gives her the evening back and she pays a small fee for it.",
+        canvas_references=[CanvasReference(section=CanvasSection.VALUE_PROPOSITIONS, note="the offer"), CanvasReference(section=CanvasSection.REVENUE_STREAMS, note="what she pays")],
+    )
+    data.update(overrides)
+    return StorytellingGenerated(**data)
+
+
+def future_generated(**overrides) -> FutureScenarioGenerated:
+    def variant(name: str) -> FutureScenarioVariant:
+        return FutureScenarioVariant(
+            name=name, narrative=f"In the {name} future the environment changes a lot.",
+            adaptation_questions=[AdaptationQuestion(section=CanvasSection.VALUE_PROPOSITIONS, question="What would the value proposition look like?")],
+        )
+
+    data = dict(uncertainty_drivers=["A new regulation", "A cheaper substitute"], variants=[variant("Calm"), variant("Squeezed")])
+    data.update(overrides)
+    return FutureScenarioGenerated(**data)
+
+
+def pitch_generated(team: bool = False, finance: bool = False, **overrides) -> PitchGenerated:
+    data = dict(
+        hook="Maya wants her evenings back.", business_model_summary="A subscription that saves households an evening a week.",
+        competitive_advantages=["Structural advantage from the pattern"], risk_analysis=["Costs may outgrow revenue: keep the offer narrow."],
+        team_section="The founders know the industry." if team else None,
+        financial_analysis_section="The business case shows a path to break-even." if finance else None,
+    )
+    data.update(overrides)
+    return PitchGenerated(**data)
+
+
+def scripted_llm(shape: Shape, *, patterns: PatternsGenerated | None = None, canvas=None, scores=None, errc=None, story=None, future=None, pitch=None) -> FakeLLM:
     """`scores`: the weighted score of the Swot of canvas version k is scores[k - 1] (the version is read off the
     prompt, so a retry gets the same answer). `errc(version, messages)` returns the ErrcGenerated of that step."""
     """Answers every stage by schema; the persona echoed in the prompt says which segment it is."""
@@ -206,6 +248,15 @@ def scripted_llm(shape: Shape, *, patterns: PatternsGenerated | None = None, can
         if schema is ErrcGenerated:
             version = canvas_version(messages)
             return errc(version, messages) if errc else default_moves(version)
+        if schema is StorytellingGenerated:
+            return story(messages, schema) if story else story_generated()
+        if schema is FutureScenarioGenerated:
+            return future(messages, schema) if future else future_generated()
+        if schema is PitchGenerated:
+            if pitch:
+                return pitch(messages, schema)
+            user_message = messages[1]["content"]
+            return pitch_generated(team="Team information:" in user_message, finance="Business case:" in user_message)
         raise AssertionError(f"unexpected schema {schema}")
 
     return FakeLLM([reply])
@@ -218,10 +269,10 @@ def canvas_version(messages: list[dict]) -> int:
 
 
 def stage_runner(llm: FakeLLM, judge_model: FakeJudgeModel | None = None, **kwargs) -> StageRunner:
-    from bizstruct_ml.stages import SLICE_3_GENERATORS
+    from bizstruct_ml.stages import SLICE_4_GENERATORS
 
     return StageRunner(
-        SLICE_3_GENERATORS, llm, ConsistencyJudge(judge_model or FakeJudgeModel([NO_FINDINGS]), retry_wait=0), retry_wait=0, **kwargs
+        SLICE_4_GENERATORS, llm, ConsistencyJudge(judge_model or FakeJudgeModel([NO_FINDINGS]), retry_wait=0), retry_wait=0, **kwargs
     )
 
 
