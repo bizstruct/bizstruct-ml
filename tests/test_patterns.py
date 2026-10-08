@@ -32,6 +32,7 @@ from tests.support.projects import (
     Seg,
     Shape,
     group,
+    multi_sided_claim_without_signal,
     pair,
     seed,
     stage_runner,
@@ -212,8 +213,7 @@ async def test_structural_errors_that_never_get_fixed_fail_the_row_with_the_mess
 
 
 def multi_sided_without_signal() -> Shape:
-    segments = tuple(Seg(s.candidate, signal=False, epicenters=s.epicenters) for s in THREE_IN_ONE_MULTI_SIDED.segments)
-    return Shape("multi-sided claim without any signal", segments, THREE_IN_ONE_MULTI_SIDED.patterns, ((1, 2, 3),))
+    return multi_sided_claim_without_signal()
 
 
 FIXED = THREE_IN_ONE_MULTI_SIDED.patterns.model_copy(

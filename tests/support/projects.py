@@ -121,6 +121,12 @@ SPLIT_IN_THREE = Shape(
     ((1,), (2,), (3,)),
 )
 
+def multi_sided_claim_without_signal() -> Shape:
+    """The model tags a multi-sided group although no scenario carries an interdependence signal."""
+    segments = tuple(Seg(s.candidate, signal=False, epicenters=s.epicenters) for s in THREE_IN_ONE_MULTI_SIDED.segments)
+    return Shape("multi-sided claim without any signal", segments, THREE_IN_ONE_MULTI_SIDED.patterns, ((1, 2, 3),))
+
+
 SHAPES = (ONE, THREE_IN_ONE_MULTI_SIDED, SPLIT_IN_TWO, SPLIT_IN_THREE)
 
 
