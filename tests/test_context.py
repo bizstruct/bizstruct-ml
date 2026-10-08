@@ -6,20 +6,20 @@ from bizstruct_domain.schemas import (
     EmpathyMap,
     RuleInput,
     Stage,
-    StageArity,
+    Arity,
     StageRow,
     StageStatus,
     derive_artifact_id,
 )
 
-from bizstruct_ml.core.context import ContextError, expected_types_of, gather_context, gather_inputs, rows_by_id
+from bizstruct_ml.core.context import ContextError, gather_context, gather_inputs, rows_by_id
 from tests.support.fakes import brief_row, empathy_generated, empathy_row
 
-ONE_EM = RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.ONE)
-MANY_EM = RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.MANY)
-ONE_BRIEF = RuleInput(stage=Stage.BRIEF, arity=StageArity.ONE)
-ONE_TEAM_OPT = RuleInput(stage=Stage.TEAM_INFO, arity=StageArity.ONE, optional=True)
-MANY_TEAM_OPT = RuleInput(stage=Stage.TEAM_INFO, arity=StageArity.MANY, optional=True)
+ONE_EM = RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.ONE)
+MANY_EM = RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.MANY)
+ONE_BRIEF = RuleInput(artifact=ArtifactType.BRIEF, arity=Arity.ONE)
+ONE_TEAM_OPT = RuleInput(artifact=ArtifactType.TEAM_INFO, arity=Arity.ONE, optional=True)
+MANY_TEAM_OPT = RuleInput(artifact=ArtifactType.TEAM_INFO, arity=Arity.MANY, optional=True)
 
 
 def empathy_model(row_id: str, name: str = "Olena") -> EmpathyMap:
@@ -69,7 +69,7 @@ def test_one_input_is_found_via_the_direct_ref():
     em = done_empathy_row("row_em_0")
     fresh = scenario_row("row_cs_0", "row_em_0")
     rows = rows_by_id([brief_row(), em, fresh])
-    (found,) = gather_inputs([ONE_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
+    ((found,),) = gather_inputs([ONE_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
     assert found.id == empathy_model("row_em_0").id
 
 
@@ -78,7 +78,7 @@ def test_one_input_prefers_the_fresh_artifacts_over_stored_ones():
     fresh_model = empathy_model("row_em_0", "New")
     fresh = stored.model_copy(update={"status": StageStatus.RUNNING})
     rows = rows_by_id([brief_row(), fresh])
-    (found,) = gather_inputs([ONE_EM], fresh_row=fresh, fresh_artifacts=[fresh_model], rows=rows)
+    ((found,),) = gather_inputs([ONE_EM], fresh_row=fresh, fresh_artifacts=[fresh_model], rows=rows)
     assert found.persona_name == "New"
 
 
@@ -94,7 +94,7 @@ def test_one_input_ignores_artifacts_that_are_not_directly_reachable():
     # empathy_map is in the closure but not a direct ref of the fresh row
     fresh = scenario_row("row_cs_0", "row_em_other")
     rows = rows_by_id([brief_row(), done_empathy_row("row_em_0"), fresh])
-    with pytest.raises(ContextError, match="no empathy_map artifact"):
+    with pytest.raises(ContextError, match="no empathy_map instance"):
         gather_inputs([ONE_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
 
 
@@ -105,7 +105,7 @@ def test_many_input_falls_back_to_the_closure_when_the_direct_refs_do_not_name_t
                      refs={Stage.CUSTOMER_SCENARIO: [r.id for r in scenarios]})
     ems = [done_empathy_row("row_em_0"), done_empathy_row("row_em_1", "Taras")]
     rows = rows_by_id([*ems, *scenarios, fresh])
-    (found,) = gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
+    ((found,),) = gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
     assert sorted(a.persona_name for a in found) == ["Olena", "Taras"]
 
 
@@ -113,14 +113,14 @@ def test_many_input_skips_rows_that_are_not_done():
     fresh = scenario_row("row_cs_0", "row_em_0")
     running = done_empathy_row("row_em_1").model_copy(update={"status": StageStatus.RUNNING})
     rows = rows_by_id([done_empathy_row("row_em_0"), running, fresh])
-    (found,) = gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
+    ((found,),) = gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
     assert len(found) == 1
 
 
 def test_absent_optional_inputs_are_none_and_empty_list():
     fresh = empathy_row()
     rows = rows_by_id([brief_row(), fresh])
-    one, many = gather_inputs([ONE_TEAM_OPT, MANY_TEAM_OPT], fresh_row=fresh, fresh_artifacts=[], rows=rows)
+    ((one, many),) = gather_inputs([ONE_TEAM_OPT, MANY_TEAM_OPT], fresh_row=fresh, fresh_artifacts=[], rows=rows)
     assert one is None and many == []
 
 
@@ -130,14 +130,6 @@ def test_absent_required_inputs_raise():
     with pytest.raises(ContextError):
         gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
 
-
-def test_expected_types_follow_the_rule_signature():
-    from bizstruct_domain.schemas import CONSISTENCY_RULES, Errc, Patterns, CustomerScenario
-
-    by_id = {r.id: r for r in CONSISTENCY_RULES}
-    assert expected_types_of(by_id["multi_sided_requires_signal"]) == [(CustomerScenario,), (Patterns,)]
-    errc_rule = by_id["errc_move_targets_correct_canvas_version"]
-    assert expected_types_of(errc_rule)[1] == (Errc,)
 
 
 # -- MANY scoped by the row's refs: the group is defined by the refs -------------------------------
@@ -154,7 +146,7 @@ def done_scenario_row(row_id: str, em_row_id: str) -> StageRow:
                     artifacts=[ArtifactRecord(id=model.id, type=ArtifactType.CUSTOMER_SCENARIO, data=model.model_dump(mode="json"))])
 
 
-MANY_CS = RuleInput(stage=Stage.CUSTOMER_SCENARIO, arity=StageArity.MANY)
+MANY_CS = RuleInput(artifact=ArtifactType.CUSTOMER_SCENARIO, arity=Arity.MANY)
 
 
 def project(groups: list[list[int]]):
@@ -190,7 +182,7 @@ def personas(found) -> list[str]:
 def test_a_canvas_row_gets_only_its_groups_maps_and_scenarios(groups):
     rows, canvases, _ = project(groups)
     for canvas, group in zip(canvases, groups):
-        found_em, found_cs = gather_inputs([MANY_EM, MANY_CS], fresh_row=canvas, fresh_artifacts=[], rows=rows)
+        ((found_em, found_cs),) = gather_inputs([MANY_EM, MANY_CS], fresh_row=canvas, fresh_artifacts=[], rows=rows)
         assert personas(found_em) == sorted(f"Persona {k}" for k in group)
         assert sorted(s.id for s in found_cs) == sorted(derive_artifact_id(f"row_cs_{k}", ArtifactType.CUSTOMER_SCENARIO) for k in group)
 
@@ -207,7 +199,7 @@ def test_a_split_projects_closure_really_holds_every_group_so_scoping_is_what_se
 def test_the_patterns_row_gets_all_maps_from_the_closure_and_all_scenarios_directly(groups):
     rows, _, patterns = project(groups)
     n = sum(len(g) for g in groups)
-    found_em, found_cs = gather_inputs([MANY_EM, MANY_CS], fresh_row=patterns, fresh_artifacts=[], rows=rows)
+    ((found_em, found_cs),) = gather_inputs([MANY_EM, MANY_CS], fresh_row=patterns, fresh_artifacts=[], rows=rows)
     assert personas(found_em) == sorted(f"Persona {k}" for k in range(n))
     assert len(found_cs) == n
 
@@ -215,7 +207,7 @@ def test_the_patterns_row_gets_all_maps_from_the_closure_and_all_scenarios_direc
 def test_the_fresh_rows_own_artifacts_of_the_stage_are_included_next_to_the_referenced_ones():
     rows, canvases, _ = project([[0, 1]])
     own = empathy_model("row_canvas_0", "Own version")  # e.g. canvas versions 2..5 held by the cycle row
-    (found,) = gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[own], rows=rows)
+    ((found,),) = gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[own], rows=rows)
     assert personas(found) == ["Own version", "Persona 0", "Persona 1"]
 
 
@@ -223,7 +215,7 @@ def test_the_fresh_rows_stored_artifacts_are_stale_and_ignored():
     rows, canvases, _ = project([[0]])
     stale = empathy_model("row_canvas_0", "Stale")
     canvases[0].artifacts = [ArtifactRecord(id=stale.id, type=ArtifactType.EMPATHY_MAP, data=stale.model_dump(mode="json"))]
-    (found,) = gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[], rows=rows)
+    ((found,),) = gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[], rows=rows)
     assert personas(found) == ["Persona 0"]
 
 
@@ -253,5 +245,5 @@ def test_on_regeneration_the_done_fresh_rows_stale_artifacts_do_not_count_on_the
     stale = done_empathy_row("row_em_0", "Stale")
     fresh = stale.model_copy(update={"refs": {Stage.BRIEF: ["row_brief"]}})
     rows = rows_by_id([brief_row(), fresh])
-    (found,) = gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[empathy_model("row_em_0", "New")], rows=rows)
+    ((found,),) = gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[empathy_model("row_em_0", "New")], rows=rows)
     assert personas(found) == ["New"]

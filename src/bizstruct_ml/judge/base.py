@@ -133,11 +133,11 @@ class ConsistencyJudge:
     @staticmethod
     def build_prompts(check: JudgeCheck, inputs: Sequence[Any]) -> tuple[str, str]:
         """(system, user): the check's instruction plus the fixed output format,
-        and the inputs as JSON labelled by each input's stage."""
+        and the inputs as JSON labelled by each input's artifact type."""
         if len(inputs) != len(check.inputs):
             raise ValueError(f"{check.id} takes {len(check.inputs)} inputs, got {len(inputs)}")
         system = f"{check.instruction}\n\n{OUTPUT_FORMAT}\n\nThe id of this check is \"{check.id}\"."
-        payload = {spec.stage.value: _jsonable(value) for spec, value in zip(check.inputs, inputs, strict=True)}
+        payload = {spec.artifact.value: _jsonable(value) for spec, value in zip(check.inputs, inputs, strict=True)}
         return system, json.dumps(payload, ensure_ascii=False, indent=2)
 
     async def evaluate(self, check: JudgeCheck, inputs: Sequence[Any]) -> ConsistencyReport:

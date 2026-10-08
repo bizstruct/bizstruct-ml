@@ -2,7 +2,7 @@
 import json
 
 import pytest
-from bizstruct_domain.schemas import JudgeCheck, RuleInput, Stage, StageArity
+from bizstruct_domain.schemas import ArtifactType, JudgeCheck, RuleInput, Stage, Arity
 
 from bizstruct_ml.judge import base
 from bizstruct_ml.judge.base import (
@@ -22,9 +22,9 @@ INPUTS = [EM, [], None]
 CHECK = JudgeCheck(
     id="demo_check",
     inputs=(
-        RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.ONE),
-        RuleInput(stage=Stage.CUSTOMER_SCENARIO, arity=StageArity.MANY),
-        RuleInput(stage=Stage.BUSINESS_CASE, arity=StageArity.ONE, optional=True),
+        RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.ONE),
+        RuleInput(artifact=ArtifactType.CUSTOMER_SCENARIO, arity=Arity.MANY),
+        RuleInput(artifact=ArtifactType.BUSINESS_CASE, arity=Arity.ONE, optional=True),
     ),
     instruction="Check that the scenario does not contradict the empathy map.",
 )

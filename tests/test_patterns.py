@@ -228,7 +228,7 @@ async def test_multi_sided_without_a_signal_regenerates_once_with_the_violation_
     outcome = await run_patterns(backend, llm, FakeJudgeModel([NO_FINDINGS]))
     assert outcome.success and outcome.consistency_retries == 1 and len(llm.calls) == 2
     feedback = llm.calls[1]["messages"][-1]["content"]
-    assert "none of the CustomerScenario instances for this project has interdependence_signal=True" in feedback
+    assert "none of the CustomerScenario instances of its own segments has interdependence_signal=True" in feedback
     assert not outcome.consistency.has_errors
     assert patterns_of(outcome).pattern_tags == []
 
