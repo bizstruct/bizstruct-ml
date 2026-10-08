@@ -38,13 +38,13 @@ from bizstruct_ml.judge.factory import build_judge_model
 from bizstruct_ml.judge.guard import assert_different_family
 from bizstruct_ml.llm.client import GENERATOR_FAMILY, LLMClient
 from bizstruct_ml.observability import tracing
-from bizstruct_ml.stages import SLICE_3_GENERATORS
+from bizstruct_ml.stages import SLICE_4_GENERATORS
 
 log = structlog.get_logger()
 
 # Stage generators the pipeline can run. A stage absent here is dead-lettered
 # with a clear reason; slices add their stages by registering them here.
-STAGE_GENERATORS: dict[Stage, StageGenerator] = {**SLICE_3_GENERATORS}
+STAGE_GENERATORS: dict[Stage, StageGenerator] = {**SLICE_4_GENERATORS}
 
 
 class Action(StrEnum):
