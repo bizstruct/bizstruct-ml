@@ -19,8 +19,13 @@ from bizstruct_domain.schemas import (
     Pattern,
     PatternsGenerated,
     PatternTag,
+    ERRCActionType,
+    ErrcGenerated,
+    ErrcMove,
+    CanvasSection,
     PricingTier,
     SegmentRelationType,
+    SwotGenerated,
     Stage,
     StageStatus,
     derive_artifact_id,
@@ -158,7 +163,19 @@ def ideation_of(seg: Seg) -> IdeationGenerated:
     )
 
 
-def scripted_llm(shape: Shape, *, patterns: PatternsGenerated | None = None, canvas=None) -> FakeLLM:
+def default_moves(version: int) -> ErrcGenerated:
+    """One raise of an existing card and one new card per iteration; both are valid on every canvas version."""
+    return ErrcGenerated(moves=[
+        ErrcMove(action=ERRCActionType.RAISE, target_section=CanvasSection.VALUE_PROPOSITIONS,
+                 target_card_text="value_propositions card 1", opposite_side_impact="costs rise a little", rationale="a strength"),
+        ErrcMove(action=ERRCActionType.CREATE, target_section=CanvasSection.CHANNELS, new_text=f"new channel idea {version}",
+                 opposite_side_impact="needs a partner", rationale="an opportunity"),
+    ])
+
+
+def scripted_llm(shape: Shape, *, patterns: PatternsGenerated | None = None, canvas=None, scores=None, errc=None) -> FakeLLM:
+    """`scores`: the weighted score of the Swot of canvas version k is scores[k - 1] (the version is read off the
+    prompt, so a retry gets the same answer). `errc(version, messages)` returns the ErrcGenerated of that step."""
     """Answers every stage by schema; the persona echoed in the prompt says which segment it is."""
     by_persona = {s.persona: s for s in shape.segments}
 
@@ -180,16 +197,29 @@ def scripted_llm(shape: Shape, *, patterns: PatternsGenerated | None = None, can
             return patterns or shape.patterns
         if schema is CanvasGenerated:
             return canvas(messages, schema) if canvas else canvas_generated()
+        if schema is SwotGenerated:
+            from tests.support.cycle_builders import swot_generated
+
+            return swot_generated(scores[canvas_version(messages) - 1])
+        if schema is ErrcGenerated:
+            version = canvas_version(messages)
+            return errc(version, messages) if errc else default_moves(version)
         raise AssertionError(f"unexpected schema {schema}")
 
     return FakeLLM([reply])
 
 
+def canvas_version(messages: list[dict]) -> int:
+    import re
+
+    return int(re.search(r"^Canvas version (\d+):", messages[1]["content"], re.M).group(1))
+
+
 def stage_runner(llm: FakeLLM, judge_model: FakeJudgeModel | None = None, **kwargs) -> StageRunner:
-    from bizstruct_ml.stages import SLICE_2_GENERATORS
+    from bizstruct_ml.stages import SLICE_3_GENERATORS
 
     return StageRunner(
-        SLICE_2_GENERATORS, llm, ConsistencyJudge(judge_model or FakeJudgeModel([NO_FINDINGS]), retry_wait=0), retry_wait=0, **kwargs
+        SLICE_3_GENERATORS, llm, ConsistencyJudge(judge_model or FakeJudgeModel([NO_FINDINGS]), retry_wait=0), retry_wait=0, **kwargs
     )
 
 

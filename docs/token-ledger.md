@@ -67,6 +67,29 @@ The four slice 1 stages were measured again in the same runs as the two slice 2 
 | split (EN) | two unrelated business lines: standing desks + laser cutting | 9 | 20,052 | 4,235 | 24,287 |
 | photo (EN) | 2-sided marketplace: photographers and studio owners | 9 | 20,320 | 4,481 | 24,801 |
 
+## Slice 3: `swot_errc_cycle` (2026-10-08, `scripts/slice2_dry_run.py`, three of the five earlier ideas)
+
+Generator `gpt-5.6-terra`, fake judge (no `JUDGE_*` configured, so judge tokens are not counted), Langfuse off, no retries of any kind in these three runs. The cycle row makes `SwotGenerated` and `ErrcGenerated` calls inside one message; they are listed apart. "Mean per call" is input / output.
+
+| call | prompt version | idea | calls | input | output | total | mean per call | date |
+|---|---|---|---|---|---|---|---|---|
+| swot (in the cycle row) | swot=1 | farm (EN) | 5 | 14,161 | 9,952 | 24,113 | 2,832 / 1,990 | 2026-10-08 |
+| errc (in the cycle row) | errc=1 | farm (EN) | 4 | 12,526 | 2,943 | 15,469 | 3,131 / 735 | 2026-10-08 |
+| swot (in the cycle row) | swot=1 | photo (EN) | 3 | 8,649 | 6,740 | 15,389 | 2,883 / 2,246 | 2026-10-08 |
+| errc (in the cycle row) | errc=1 | photo (EN) | 2 | 6,748 | 1,731 | 8,479 | 3,374 / 865 | 2026-10-08 |
+| swot (in the cycle row) | swot=1 | split (EN) | 3 | 8,818 | 7,746 | 16,564 | 2,939 / 2,582 | 2026-10-08 |
+| errc (in the cycle row) | errc=1 | split (EN) | 2 | 7,291 | 1,682 | 8,973 | 3,645 / 841 | 2026-10-08 |
+
+### The cycle row, per idea
+
+| idea | description | iterations | score series | final version | calls | input | output | total | wall-clock of the row | whole run through the cycle (all stages) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| farm | single segment | 5 | [199.0, 82.0, 79.0, 76.0, 78.0] | 4 | 9 | 26,687 | 12,895 | 39,582 | 129 s | 54,688 |
+| photo | 2-sided marketplace | 3 | [116.0, 79.0, 86.0] | 2 | 5 | 15,397 | 8,471 | 23,868 | 87 s | 48,514 |
+| split | two unrelated lines | 3 | [212.0, 197.0, 203.0] | 2 | 5 | 16,109 | 9,428 | 25,537 | 92 s | 50,845 |
+
+Wall-clock of the cycle row against the message lock renewal (`lock_renewal_seconds`, 900 s): 87 s to 129 s, i.e. at most 14 % of it, for 3 to 5 iterations of a single canvas. A project split into several canvases has one cycle row (one message) per canvas.
+
 ## Reported earlier: slice 1 run totals (no per-stage split was recorded)
 
 From the reports of PR #6 and PR #7 (slice 1 stages only: `brief`, `empathy_map`, `customer_scenario`, `ideation`). Ideas as described there; the exact texts were not kept in the repository.

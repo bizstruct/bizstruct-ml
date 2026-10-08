@@ -18,8 +18,8 @@ the loop around it:
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
-from typing import ClassVar, Protocol
+from collections.abc import Callable, Mapping, Sequence
+from typing import ClassVar, Protocol, TypeVar
 
 import structlog
 from bizstruct_domain.schemas import (
@@ -50,6 +50,8 @@ from bizstruct_ml.observability import tracing
 from bizstruct_ml.validation.degenerate_text import DegenerateTextError, validate_block_text
 
 log = structlog.get_logger()
+
+T = TypeVar("T")
 
 MAX_CONSISTENCY_RETRIES = 2
 # A cut-off completion (finish_reason "length") is retried once: the same prompt
@@ -110,6 +112,36 @@ class StageGenerator(ABC):
         Raise a pydantic `ValidationError` if the content does not fit.
         """
 
+    def present_feedback(self, message: str, ctx: StageContext, produced: Sequence[BaseModel]) -> str:
+        """A consistency violation message as the model should read it. The messages come from the
+        domain and name real ids; a generator whose prompt showed the model something else (aliases)
+        overrides this to say it in the prompt's terms. Default: the message unchanged."""
+        return message
+
+
+class LoopGenerator(StageGenerator):
+    """A stage that runs its own loop of LLM calls inside one message (the swot_errc_cycle).
+
+    The stage has several generation contracts; the generator owns the loop and calls the
+    runner's services for every LLM call, so each call keeps the runner's retries, text
+    validation, feedback and tracing. The runner then runs the consistency checks once on the
+    final result: a retry happens per call (see `LoopServices.call_checked`), never as a
+    regeneration of the whole row.
+    """
+
+    contracts: ClassVar[tuple[type, ...]]
+
+    def build_messages(self, ctx: StageContext) -> list[dict]:
+        raise NotImplementedError("a loop generator builds its messages inside run_loop")
+
+    def to_artifacts(self, generated: BaseModel, ctx: StageContext) -> list[tuple[ArtifactType, BaseModel]]:
+        raise NotImplementedError("a loop generator converts inside run_loop")
+
+    @abstractmethod
+    async def run_loop(self, ctx: StageContext, services: "LoopServices") -> list[tuple[ArtifactType, BaseModel]]:
+        """All artifacts of the row, in the order they are returned. Raise `GenerationFailed`
+        (or let the underlying error through) to fail the row."""
+
 
 class RunOutcome(BaseModel):
     artifacts: list[ArtifactRecord] = []
@@ -160,10 +192,16 @@ class StageRunner:
     ) -> None:
         for stage, generator in generators.items():
             contracts = GENERATION_CONTRACTS.get(stage, ())
-            if generator.stage != stage or len(contracts) != 1:
+            if isinstance(generator, LoopGenerator):
+                if generator.stage != stage or tuple(generator.contracts) != tuple(contracts):
+                    raise ValueError(
+                        f"loop generator for {stage.value} must declare that stage and exactly its generation "
+                        f"contracts {[c.__name__ for c in contracts]}"
+                    )
+            elif generator.stage != stage or len(contracts) != 1:
                 raise ValueError(
                     f"generator for {stage.value} must declare that stage and the stage must have exactly "
-                    f"one generation contract (got {len(contracts)}); multi-contract stages come with the cycle"
+                    f"one generation contract (got {len(contracts)}); a multi-contract stage needs a LoopGenerator"
                 )
         self._generators = dict(generators)
         self._llm = llm
@@ -194,6 +232,9 @@ class StageRunner:
         except ContextError as e:
             return self._failed(f"context: {e}")
 
+        if isinstance(generator, LoopGenerator):
+            return await self._run_loop(generator, ctx)
+
         contract = GENERATION_CONTRACTS[row.stage][0]
         feedback: list[str] = []
         retries = 0
@@ -207,7 +248,7 @@ class StageRunner:
 
             with tracing.span("consistency_rules"):
                 violations = run_deterministic(row, [m for _, m in models], rows, self._rules)
-            errors = [v.message for v in violations if v.severity == "error"]
+            errors = [generator.present_feedback(v.message, ctx, [m for _, m in models]) for v in violations if v.severity == "error"]
             if not errors or retries >= MAX_CONSISTENCY_RETRIES:
                 break
             retries += 1
@@ -225,6 +266,29 @@ class StageRunner:
             consistency_retries=retries,
         )
 
+    async def _run_loop(self, generator: LoopGenerator, ctx: StageContext) -> RunOutcome:
+        row, rows = ctx.row, ctx.rows
+        services = LoopServices(self, ctx)
+        try:
+            models = await generator.run_loop(ctx, services)
+            for artifact_type, model in models:
+                parse_artifact(_record(row, artifact_type, model))
+        except ContextError as e:
+            return self._failed(f"context: {e}")
+        except (LLMError, ValueError, DegenerateTextError, GenerationFailed) as e:
+            return self._failed(str(e))
+        with tracing.span("consistency_rules"):
+            violations = run_deterministic(row, [m for _, m in models], rows, self._rules)
+        records = [_record(row, t, m) for t, m in models]
+        reports, unavailable = await run_judge(
+            row, [m for _, m in models], rows, self._judge, self._checks, artifact_ids=[r.id for r in records]
+        )
+        return RunOutcome(
+            artifacts=records,
+            consistency=build_report(violations, reports, unavailable),
+            consistency_retries=services.consistency_retries,
+        )
+
     async def _generate(
         self,
         generator: StageGenerator,
@@ -236,19 +300,55 @@ class StageRunner:
         messages = generator.build_messages(ctx)
         if feedback:
             messages = [*messages, _feedback_message(feedback)]
+
+        def convert(generated: BaseModel) -> list[tuple[ArtifactType, BaseModel]]:
+            models = generator.to_artifacts(generated, ctx)
+            if not models:
+                raise ValueError(f"generator for {ctx.row.stage.value} produced no artifacts")
+            # Validate what be will validate, so a bad artifact is a generation
+            # failure here and not a 422 (and a dead-lettered message) there.
+            for artifact_type, model in models:
+                parse_artifact(_record(ctx.row, artifact_type, model))
+            return models
+
+        return await self._call(
+            contract=contract,
+            messages=messages,
+            convert=convert,
+            language=ctx.language,
+            prompt_version=generator.prompt_version,
+            consistency_round=consistency_round,
+        )
+
+    async def _call(
+        self,
+        *,
+        contract: type,
+        messages: list[dict],
+        convert: Callable[[BaseModel], T],
+        language: str,
+        prompt_version: str,
+        consistency_round: int = 0,
+        label: str = "",
+    ) -> T:
+        """One LLM call with everything around it: retries on LLM errors, schema/conversion errors
+        and degenerate text, the conversion error shown to the model on the next attempt, the
+        one-retry length rule, the text validation and the tracing. `convert` turns the generated
+        model into the result and may raise `ValueError` (retried with its message as feedback)."""
         attempts = {"n": 0}
         length_hits = {"n": 0}
         # Why the last answer could not be converted (a pydantic or ValueError from
-        # `to_artifacts`); the next attempt shows it to the model as feedback.
+        # `convert`); the next attempt shows it to the model as feedback.
         conversion_error: list[str] = []
 
-        async def attempt() -> list[tuple[ArtifactType, BaseModel]]:
+        async def attempt() -> T:
             attempts["n"] += 1
             call_messages = [*messages, _conversion_feedback_message(conversion_error[-1])] if conversion_error else messages
             metadata = {
                 "attempt": attempts["n"],
                 "consistency_round": consistency_round,
-                "prompt_version": generator.prompt_version,
+                "prompt_version": prompt_version,
+                **({"label": label} if label else {}),
             }
             with tracing.generation_span(
                 "llm_call", model=self._llm.model_name, input=call_messages, metadata=metadata
@@ -279,7 +379,7 @@ class StageRunner:
             # repeated runs). A retry-worthy finding retries like a schema error and,
             # when retries run out, fails the row. Every finding goes on the span.
             with tracing.span("validate_text") as text_span:
-                findings = validate_block_text(contract, generated.model_dump(mode="json"), ctx.language)
+                findings = validate_block_text(contract, generated.model_dump(mode="json"), language)
                 text_span.update(
                     metadata={
                         "violations": [
@@ -292,17 +392,10 @@ class StageRunner:
                 if retry_worthy:
                     raise DegenerateTextError(retry_worthy)
             try:
-                models = generator.to_artifacts(generated, ctx)
-                if not models:
-                    raise ValueError(f"generator for {ctx.row.stage.value} produced no artifacts")
-                # Validate what be will validate, so a bad artifact is a generation
-                # failure here and not a 422 (and a dead-lettered message) there.
-                for artifact_type, model in models:
-                    parse_artifact(_record(ctx.row, artifact_type, model))
+                return convert(generated)
             except ValueError as e:
                 conversion_error[:] = [str(e)]
                 raise
-            return models
 
         return await retry_async(
             attempt,
@@ -319,3 +412,51 @@ class StageRunner:
         return RunOutcome(
             failure=StageFailure(code=StageErrorCode.GENERATION_FAILED, message=message[:_MAX_FAILURE_MESSAGE])
         )
+
+
+class LoopServices:
+    """What a `LoopGenerator` may use: the runner's LLM call and the per-call consistency retry."""
+
+    def __init__(self, runner: StageRunner, ctx: StageContext) -> None:
+        self._runner = runner
+        self._ctx = ctx
+        self.consistency_retries = 0
+
+    async def call(self, contract: type, messages: list[dict], convert: Callable[[BaseModel], T], *, label: str) -> T:
+        return await self._runner._call(
+            contract=contract, messages=messages, convert=convert, language=self._ctx.language,
+            prompt_version=self._runner._generators[self._ctx.row.stage].prompt_version, label=label,
+        )
+
+    async def call_checked(
+        self,
+        contract: type,
+        messages: list[dict],
+        convert: Callable[[BaseModel], T],
+        *,
+        label: str,
+        artifacts_of: Callable[[T], Sequence[BaseModel]],
+    ) -> T:
+        """`call`, then the deterministic rules over `artifacts_of(result)` (the artifacts the row would
+        hold with this result added). An error violation regenerates THIS call with the violation
+        messages as feedback, at most `MAX_CONSISTENCY_RETRIES` times; what is left after that is
+        reported by the final consistency pass of the row."""
+        ctx, runner = self._ctx, self._runner
+        feedback: list[str] = []
+        for retry in range(MAX_CONSISTENCY_RETRIES + 1):
+            asked = [*messages, _feedback_message(feedback)] if feedback else messages
+            result = await runner._call(
+                contract=contract, messages=asked, convert=convert, language=ctx.language,
+                prompt_version=runner._generators[ctx.row.stage].prompt_version, consistency_round=retry, label=label,
+            )
+            with tracing.span("consistency_rules"):
+                violations = run_deterministic(ctx.row, artifacts_of(result), ctx.rows, runner._rules)
+            generator = runner._generators[ctx.row.stage]
+            produced = artifacts_of(result)
+            errors = [generator.present_feedback(v.message, ctx, produced) for v in violations if v.severity == "error"]
+            if not errors or retry >= MAX_CONSISTENCY_RETRIES:
+                return result
+            feedback = errors
+            self.consistency_retries += 1
+            log.info("consistency_retry", row_id=ctx.row.id, stage=ctx.row.stage.value, call=label, retry=retry + 1, errors=len(errors))
+        raise AssertionError("unreachable")

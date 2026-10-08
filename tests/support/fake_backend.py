@@ -11,8 +11,12 @@ group from the domain's `canvas_rows_for` (instance_index = position of the
 group in `Patterns.groups`). It talks HTTP through an httpx `MockTransport`, so
 the real `BackendClient` is exercised unchanged.
 
+After each DONE canvas row, one `swot_errc_cycle` row (refs: that canvas row; the
+environment_scan row would be added only if the project enabled it, and no generator
+exists for it yet).
+
 `through` is the last stage the fake creates rows for: slice 1 tests keep the
-default (`ideation`), slice 2 passes `Stage.CANVAS`.
+default (`ideation`), slice 2 passes `Stage.CANVAS`, slice 3 `Stage.SWOT_ERRC_CYCLE`.
 """
 
 import json
@@ -125,6 +129,14 @@ class FakeBackend:
                     Stage.IDEATION: [r.id for r in ideations if r.refs[Stage.EMPATHY_MAP][0] in ids],
                     Stage.PATTERNS: [patterns_row.id],
                 })
+
+        if self.through == Stage.CANVAS:
+            return
+        for canvas_row in self.rows_of(Stage.CANVAS):
+            if canvas_row.status == StageStatus.DONE and not any(
+                r.refs.get(Stage.CANVAS) == [canvas_row.id] for r in self.rows_of(Stage.SWOT_ERRC_CYCLE)
+            ):
+                self.add_row(Stage.SWOT_ERRC_CYCLE, 0, {Stage.CANVAS: [canvas_row.id]}, suffix=canvas_row.instance_index)
 
     def dispatch_ready(self) -> list[QueueMessage]:
         """Mark every ready row RUNNING with a fresh attempt and return its message."""

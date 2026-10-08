@@ -17,6 +17,7 @@ from bizstruct_domain.schemas import (
     StageStatus,
     Swot,
     SwotAxisStatement,
+    SwotGenerated,
     SwotCluster,
     SwotClusterResult,
     SwotOpportunity,
@@ -26,9 +27,9 @@ from bizstruct_domain.schemas import (
 from pydantic import BaseModel
 
 
-def swot_scoring(total: int, row_id: str, version: int) -> Swot:
-    """A valid Swot whose weighted_weakness_threat_score is `total` (21..105: the fixed threat catalog
-    rated 1..5; the axis statements are positive so they add nothing)."""
+def swot_clusters(total: int) -> list[SwotClusterResult]:
+    """Clusters whose weighted_weakness_threat_score is `total` (21..105: the fixed threat catalog rated 1..5;
+    the axis statements are positive so they add nothing)."""
     extra = total - 21
     assert 0 <= extra <= 84, total
     clusters = []
@@ -40,6 +41,16 @@ def swot_scoring(total: int, row_id: str, version: int) -> Swot:
             threats.append(SwotThreat(question=question, text="threat", score=1 + bump))
         axes = [SwotAxisStatement(positive_statement="p", negative_statement="n", score=s, importance=5, certainty=5) for s in (1, 2)]
         clusters.append(SwotClusterResult(cluster=kind, axis_statements=axes, opportunities=[SwotOpportunity(text="o", score=3)], threats=threats))
+    return clusters
+
+
+def swot_generated(total: int) -> SwotGenerated:
+    return SwotGenerated(clusters=swot_clusters(total))
+
+
+def swot_scoring(total: int, row_id: str, version: int) -> Swot:
+    """A valid Swot whose weighted_weakness_threat_score is `total`."""
+    clusters = swot_clusters(total)
     swot = Swot(
         id=derive_artifact_id(row_id, ArtifactType.SWOT, version),
         canvas_id=derive_artifact_id(row_id if version > 1 else "row_canvas_0", ArtifactType.CANVAS, version),
