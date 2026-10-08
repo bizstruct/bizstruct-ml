@@ -370,6 +370,11 @@ class StageRunner:
                                 "the generation does not fit the output limit"
                             ) from e
                     raise
+                except ValueError as e:
+                    # The client parses the answer with the contract, so a field rule the JSON Schema cannot
+                    # express (e.g. new_text on a raise) fails here, not in `convert`: show it to the model too.
+                    conversion_error[:] = [str(e)]
+                    raise
                 span.update(
                     output=generated.model_dump(mode="json"),
                     usage_details=self._llm.last_usage,

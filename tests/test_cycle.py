@@ -242,7 +242,10 @@ async def test_a_deterministic_error_on_an_errc_retries_that_call_and_a_remainin
 
     def errc(version, messages):
         feedback = messages[-1]["content"]
-        return default_moves(version) if "Do not propose idea two." not in feedback else default_moves(version + 10)
+        moves = default_moves(version)
+        if "Do not propose idea two." not in feedback:
+            return moves
+        return ErrcGenerated(moves=[moves.moves[0], moves.moves[1].model_copy(update={"new_text": "a fresh channel"})])
 
     llm = scripted_llm(ONE, scores=(90, 100), errc=errc)
     runner = StageRunner(SLICE_3_GENERATORS, llm, ConsistencyJudge(FakeJudgeModel([NO_FINDINGS]), retry_wait=0), rules=[rule], retry_wait=0)
@@ -321,7 +324,7 @@ def test_the_runner_registers_the_cycle_generator_only_with_its_two_contracts():
 
     with pytest.raises(ValueError, match="must declare that stage and exactly its generation contracts"):
         StageRunner({CYCLE: Wrong()}, FakeLLM([None]), ConsistencyJudge(FakeJudgeModel(), retry_wait=0))
-    assert stage_runner(FakeLLM([None])).prompt_version(CYCLE) == "swot=1,errc=1"
+    assert stage_runner(FakeLLM([None])).prompt_version(CYCLE) == "swot=1,errc=2"
 
 
 def test_a_gap_in_the_swot_versions_is_refused_before_anything_is_returned():
@@ -352,3 +355,63 @@ async def test_the_outcome_counts_the_per_call_consistency_retries():
     snapshot = ProjectSnapshot(project_id="project_001", idea="x", language="en", rows=backend.closure_of(row.id))
     outcome = await runner.run(row, snapshot, "en")
     assert outcome.consistency_retries == 2 and outcome.success and outcome.consistency.has_errors
+
+
+# -- reduce / raise carry the card's new text (domain 0.17.0) ---------------------------------------------------------
+
+
+async def test_a_raise_replaces_the_cards_text_in_the_next_version_and_keeps_its_id():
+    backend, *_ = await run_cycle((100, 90, 95))
+    row = cycle_of(backend)
+    v1 = parse_artifact(backend.rows_of(Stage.CANVAS)[0].artifacts[0])
+    v2, v3 = artifacts_of(row, ArtifactType.CANVAS)
+    target = v1.sections.value_propositions[0]
+    assert target.text == "value_propositions card 1"  # the default raise target
+    assert (v2.sections.value_propositions[0].id, v2.sections.value_propositions[0].text) == (target.id, "value_propositions card 1 (level 1)")
+    assert (v3.sections.value_propositions[0].id, v3.sections.value_propositions[0].text) == (target.id, "value_propositions card 1 (level 2)")
+    assert v2.sections.value_propositions[0].errc_marker == ERRCActionType.RAISE
+
+
+def _violating_then_valid(first: ErrcMove):
+    def errc(version, messages):
+        if version == 1 and not any("could not be used" in m["content"] for m in messages):
+            return first
+        return default_moves(version)
+
+    return errc
+
+
+@pytest.mark.parametrize(
+    ("bad", "message"),
+    [
+        ({"action": ERRCActionType.RAISE, "target_card_text": "value_propositions card 1"}, "new_text must be provided when action is RAISE"),
+        ({"action": ERRCActionType.REDUCE, "target_card_text": "value_propositions card 1"}, "new_text must be provided when action is REDUCE"),
+        ({"action": ERRCActionType.ELIMINATE, "target_card_text": "value_propositions card 1", "new_text": "x"}, "new_text must be None when action is ELIMINATE"),
+        ({"action": ERRCActionType.CREATE, "new_text": "x", "target_card_text": "value_propositions card 1"}, "target_card_text must be None when action is CREATE"),
+    ],
+)
+async def test_a_field_rule_violation_retries_and_the_message_names_the_action_and_the_field(bad, message):
+    """The client parses the answer with the contract, so the violation is raised by the LLM call itself. The runner
+    must show the message to the model, not just retry blindly."""
+    from pydantic import ValidationError
+
+    inner = scripted_llm(ONE, scores=(90, 100))._replies[0]
+    state = {"failed": False}
+
+    def reply(messages, schema):
+        if schema is ErrcGenerated and not state["failed"]:
+            state["failed"] = True
+            ErrcMove(action=bad["action"], target_section=CanvasSection.VALUE_PROPOSITIONS, target_card_text=bad.get("target_card_text"),
+                     new_text=bad.get("new_text"), opposite_side_impact="i", rationale="r")  # raises the domain's ValidationError
+        return inner(messages, schema)
+
+    llm = FakeLLM([reply])
+    with pytest.raises(ValidationError):
+        reply([{}, {}], ErrcGenerated)  # the helper really does raise
+    state["failed"] = False
+    backend, llm, _ = await run_cycle(None, llm=llm)
+    errc_calls = [c for c in llm.calls if c["schema"] is ErrcGenerated]
+    assert len(errc_calls) == 2
+    feedback = errc_calls[1]["messages"][-1]["content"]
+    assert "could not be used" in feedback and message in feedback
+    assert cycle_of(backend).status == StageStatus.DONE

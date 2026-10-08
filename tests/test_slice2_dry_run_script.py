@@ -79,3 +79,31 @@ async def test_the_script_reports_the_cycle_scores_final_version_and_timing(scri
     assert row["seconds"] >= 0 and report["tokens_per_stage"]["swot_errc_cycle"]["calls"] == 5
     printed = capsys.readouterr().out
     assert "message lock renewal: 900 s" in printed and "final version 2" in printed
+
+
+async def test_the_script_counts_field_rule_retries_and_reports_the_threat_histogram(script, tmp_path):
+    from bizstruct_domain.schemas import CanvasSection, ERRCActionType, ErrcMove
+    from pydantic import ValidationError
+    from tests.support.fakes import FakeLLM
+    from tests.support.projects import ONE
+
+    inner_reply = scripted_llm(ONE, scores=(90, 100))._replies[0]
+    state = {"failed": False}
+
+    def reply(messages, schema):
+        if schema.__name__ == "ErrcGenerated" and not state["failed"]:
+            state["failed"] = True
+            try:
+                ErrcMove(action=ERRCActionType.RAISE, target_section=CanvasSection.CHANNELS, target_card_text="x", opposite_side_impact="i", rationale="r")
+            except ValidationError:
+                raise
+        return inner_reply(messages, schema)
+
+    inner = FakeLLM([reply])
+    inner.last_usage = {"input": 1, "output": 1, "total": 2}
+    out = tmp_path / "run.json"
+    await script.main("x", "en", str(out), inner=inner, judge=ConsistencyJudge(FakeJudgeModel([NO_FINDINGS]), retry_wait=0), judge_label="fake")
+    report = json.loads(out.read_text())
+    assert report["field_rule_retries"] == 1 and report["conversion_retries"] == 1
+    histogram = report["cycles"][0]["threat_histogram"]
+    assert len(histogram) == 2 and all(sum(h.values()) == 21 for h in histogram)

@@ -140,6 +140,7 @@ def summarise(backend: FakeBackend, llm: TrackingLLM) -> dict:
             "final_version": select_final_version(scores) if scores else None,
             "moves": [[{"action": m.action.value, "section": m.target_section.value, "target": m.target_card_text, "new": m.new_text,
                         "rationale": m.rationale, "opposite_side_impact": m.opposite_side_impact} for m in e.moves] for e in errcs],
+            "threat_histogram": [{str(n): sum(t.score == n for c in w.clusters for t in c.threats) for n in range(1, 6)} for w in swots],
             "swot_signals": [{"weaknesses": sum(a.score < 0 for c in w.clusters for a in c.axis_statements),
                               "strengths": sum(a.score > 0 for c in w.clusters for a in c.axis_statements),
                               "opportunities": sum(len(c.opportunities) for c in w.clusters),
@@ -147,6 +148,9 @@ def summarise(backend: FakeBackend, llm: TrackingLLM) -> dict:
         })
     if cycles:
         summary["cycles"] = cycles
+    # field-rule retries: a move that broke "which of target_card_text / new_text goes with which action"
+    summary["field_rule_retries"] = sum("when action is" in t for r in llm.rows.values() for t in r.triggers)
+    summary["conversion_retries"] = sum(t.startswith("conversion/structure") for r in llm.rows.values() for t in r.triggers)
     if isinstance(patterns, Patterns):
         index = {em_row.artifacts[0].id: i + 1 for i, em_row in enumerate(backend.rows_of(Stage.EMPATHY_MAP))}
         summary["branch_decision"] = patterns.branch_decision.value
@@ -187,13 +191,14 @@ async def main(idea: str, language: str, json_path: str | None, *, inner=None, j
         extra = f"  retries: {record['triggers']}" if record["triggers"] else ""
         print(f"  {record['row_id']:<28} calls {record['calls']}  tokens {record['tokens']}  consistency retries {record['consistency_retries']}"
               + (f"  FAILED: {record['failure']}" if record["failure"] else "") + extra)
+    print(f"\n== retries: field-rule {summary['field_rule_retries']}, conversion/structure {summary['conversion_retries']}")
     print(f"\n== wall-clock per row (message lock renewal: {ml_settings.lock_renewal_seconds} s)")
     for record in summary["rows"].values():
         print(f"  {record['row_id']:<28} {record['seconds']:>6.1f} s")
     for cycle in summary.get("cycles", []):
         print(f"\n== {cycle['row']} [{cycle['status']}]: {cycle['iterations']} iteration(s), scores {cycle['scores']}, final version {cycle['final_version']}")
         for k, signals in enumerate(cycle["swot_signals"], start=1):
-            print(f"  swot v{k}: {signals}")
+            print(f"  swot v{k}: {signals}  threat scores {cycle['threat_histogram'][k - 1]}")
         for k, moves in enumerate(cycle["moves"], start=1):
             for m in moves:
                 what = f"{m['target']!r}" if m["target"] else f"new {m['new']!r}"

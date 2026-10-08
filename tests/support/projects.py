@@ -164,10 +164,12 @@ def ideation_of(seg: Seg) -> IdeationGenerated:
 
 
 def default_moves(version: int) -> ErrcGenerated:
-    """One raise of an existing card and one new card per iteration; both are valid on every canvas version."""
+    """A raise of one existing card (its text gets a level suffix per iteration) and one new card; valid on every canvas version."""
+    base = "value_propositions card 1"
+    target = base if version == 1 else f"{base} (level {version - 1})"
     return ErrcGenerated(moves=[
-        ErrcMove(action=ERRCActionType.RAISE, target_section=CanvasSection.VALUE_PROPOSITIONS,
-                 target_card_text="value_propositions card 1", opposite_side_impact="costs rise a little", rationale="a strength"),
+        ErrcMove(action=ERRCActionType.RAISE, target_section=CanvasSection.VALUE_PROPOSITIONS, target_card_text=target,
+                 new_text=f"{base} (level {version})", opposite_side_impact="costs rise a little", rationale="a strength"),
         ErrcMove(action=ERRCActionType.CREATE, target_section=CanvasSection.CHANNELS, new_text=f"new channel idea {version}",
                  opposite_side_impact="needs a partner", rationale="an opportunity"),
     ])

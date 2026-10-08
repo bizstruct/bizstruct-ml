@@ -85,7 +85,7 @@ def test_the_swot_system_prompt_lists_every_catalog_question_with_its_own_gloss(
     for cluster in SwotCluster:
         assert f"cluster {cluster.value}" in system
     assert "never 0" in system and "derived ONLY from the canvas" in system
-    assert swot_prompt.PROMPT_VERSION == "1" and errc_prompt.PROMPT_VERSION == "1"
+    assert swot_prompt.PROMPT_VERSION == "1" and errc_prompt.PROMPT_VERSION == "2"
 
 
 def test_no_gloss_repeats_a_book_sentence():
@@ -97,6 +97,16 @@ def test_errc_prompt_asks_for_exact_card_text_and_shows_only_swot_signals():
     system = errc_prompt.SYSTEM
     for text in ("copied character for character", "Never target the same card twice", "opposite_side_impact", "eliminate", "reduce", "raise", "create"):
         assert text in system, text
+    # the field rule for each action, one line each
+    for line in (
+        "- eliminate: target_card_text only (no new_text).",
+        "- reduce and raise: target_card_text AND new_text (the card's new full text).",
+        "- create: new_text only (no target_card_text).",
+    ):
+        assert line in system, line
+    assert "it must say concretely how the level changes" in system
+    assert "do not move it again unless your new_text goes further than the text it has now" in system
+    assert "only its text changes" in system and "The card itself is kept as it is" not in system
     swot = swot_scoring(95, "row", 1)
     signals = errc_prompt.swot_signals(swot)
     assert signals.count("Cluster ") == 4 and "threat " in signals
