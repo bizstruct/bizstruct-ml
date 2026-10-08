@@ -1,13 +1,14 @@
 """Consistency: applicability, the score rule, report building."""
 import pytest
 from bizstruct_domain.schemas import (
+    ArtifactType,
     ConsistencyReport,
     ConsistencyRule,
     ConsistencyViolation,
     JudgeCheck,
     RuleInput,
     Stage,
-    StageArity,
+    Arity,
 )
 
 from bizstruct_ml.core.consistency import (
@@ -63,11 +64,11 @@ def test_report_keeps_deterministic_then_judge_then_extra_violations_in_order():
 def test_rules_apply_only_when_they_read_the_fresh_stage_and_are_checkable():
     fresh = empathy_row()
     rows = rows_by_id([brief_row(), fresh])
-    reads_empathy = ConsistencyRule("a", (RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.ONE),), lambda e: [])
-    reads_brief_only = ConsistencyRule("b", (RuleInput(stage=Stage.BRIEF, arity=StageArity.ONE),), lambda b: [])
+    reads_empathy = ConsistencyRule("a", (RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.ONE),), lambda e: [])
+    reads_brief_only = ConsistencyRule("b", (RuleInput(artifact=ArtifactType.BRIEF, arity=Arity.ONE),), lambda b: [])
     needs_scenario = ConsistencyRule(
         "c",
-        (RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.ONE), RuleInput(stage=Stage.CUSTOMER_SCENARIO, arity=StageArity.ONE)),
+        (RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.ONE), RuleInput(artifact=ArtifactType.CUSTOMER_SCENARIO, arity=Arity.ONE)),
         lambda e, s: [],
     )
     ids = [r.id for r in applicable_rules(fresh, rows, [reads_empathy, reads_brief_only, needs_scenario])]
@@ -77,8 +78,8 @@ def test_rules_apply_only_when_they_read_the_fresh_stage_and_are_checkable():
 def test_judge_checks_use_the_same_applicability():
     fresh = empathy_row()
     rows = rows_by_id([brief_row(), fresh])
-    check = JudgeCheck(id="j", inputs=(RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.ONE),), instruction="x")
-    other = JudgeCheck(id="k", inputs=(RuleInput(stage=Stage.BRIEF, arity=StageArity.ONE),), instruction="x")
+    check = JudgeCheck(id="j", inputs=(RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.ONE),), instruction="x")
+    other = JudgeCheck(id="k", inputs=(RuleInput(artifact=ArtifactType.BRIEF, arity=Arity.ONE),), instruction="x")
     assert [c.id for c in applicable_checks(fresh, rows, [check, other])] == ["j"]
 
 
@@ -87,7 +88,7 @@ def test_run_deterministic_passes_the_gathered_artifacts_to_the_rule():
     rows = rows_by_id([brief_row(), fresh])
     seen = []
     rule = ConsistencyRule(
-        "r", (RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.ONE),), lambda e: seen.append(e) or [violation("error")]
+        "r", (RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.ONE),), lambda e: seen.append(e) or [violation("error")]
     )
     from tests.support.fakes import empathy_generated
     from bizstruct_domain.schemas import EmpathyMap

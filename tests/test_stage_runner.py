@@ -10,7 +10,7 @@ from bizstruct_domain.schemas import (
     JudgeCheck,
     RuleInput,
     Stage,
-    StageArity,
+    Arity,
     StageErrorCode,
     derive_artifact_id,
     parse_artifact,
@@ -29,7 +29,7 @@ from tests.support.fakes import (
     snapshot_for,
 )
 
-EM_INPUT = (RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.ONE),)
+EM_INPUT = (RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.ONE),)
 
 
 def rule(severity: str = "error", bad_name: str = "Bad") -> ConsistencyRule:

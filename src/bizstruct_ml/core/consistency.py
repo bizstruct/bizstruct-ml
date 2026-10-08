@@ -20,7 +20,7 @@ from bizstruct_domain.schemas import (
 )
 from pydantic import BaseModel
 
-from bizstruct_ml.core.context import expected_types_of, gather_inputs
+from bizstruct_ml.core.context import gather_inputs
 from bizstruct_ml.judge.base import ConsistencyJudge, JudgeUnavailable
 from bizstruct_ml.observability import tracing
 
@@ -54,14 +54,8 @@ def run_deterministic(
     """Violations of every deterministic rule that applies to the fresh row."""
     violations: list[ConsistencyViolation] = []
     for rule in applicable_rules(fresh_row, rows, rules):
-        args = gather_inputs(
-            rule.inputs,
-            fresh_row=fresh_row,
-            fresh_artifacts=fresh_artifacts,
-            rows=rows,
-            expected_types=expected_types_of(rule),
-        )
-        violations.extend(rule.check(*args))
+        for args in gather_inputs(rule.inputs, fresh_row=fresh_row, fresh_artifacts=fresh_artifacts, rows=rows):
+            violations.extend(rule.check(*args))
     return violations
 
 
@@ -84,19 +78,20 @@ async def run_judge(
     reports: list[ConsistencyReport] = []
     unavailable: list[ConsistencyViolation] = []
     for check in applicable_checks(fresh_row, rows, checks):
-        inputs = gather_inputs(check.inputs, fresh_row=fresh_row, fresh_artifacts=fresh_artifacts, rows=rows)
-        with tracing.span(f"judge:{check.id}"):
-            try:
-                reports.append(await judge.evaluate(check, inputs))
-            except JudgeUnavailable as e:
-                unavailable.append(
-                    ConsistencyViolation(
-                        rule_id=f"judge_unavailable:{check.id}",
-                        severity="warning",
-                        message=f"Judge check could not run: {e}",
-                        artifact_ids=list(artifact_ids),
+        bound = gather_inputs(check.inputs, fresh_row=fresh_row, fresh_artifacts=fresh_artifacts, rows=rows)
+        for inputs in bound:  # several only for an EACH input: one judge call per instance
+            with tracing.span(f"judge:{check.id}"):
+                try:
+                    reports.append(await judge.evaluate(check, inputs))
+                except JudgeUnavailable as e:
+                    unavailable.append(
+                        ConsistencyViolation(
+                            rule_id=f"judge_unavailable:{check.id}",
+                            severity="warning",
+                            message=f"Judge check could not run: {e}",
+                            artifact_ids=list(artifact_ids),
+                        )
                     )
-                )
     return reports, unavailable
 
 

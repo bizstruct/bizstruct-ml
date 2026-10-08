@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass
 from typing import ClassVar
 
-from bizstruct_domain.schemas import ConsistencyReport, JudgeCheck, RuleInput, Stage, StageArity
+from bizstruct_domain.schemas import ArtifactType, ConsistencyReport, JudgeCheck, RuleInput, Stage, Arity
 
 from bizstruct_ml.judge.azure_foundry import AzureFoundryChatJudge
 from bizstruct_ml.judge.base import ConsistencyJudge, JudgeModel, JudgeModelError
@@ -28,8 +28,8 @@ from bizstruct_ml.judge.base import ConsistencyJudge, JudgeModel, JudgeModelErro
 CHECK = JudgeCheck(
     id="smoke_persona_consistency",
     inputs=(
-        RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.ONE),
-        RuleInput(stage=Stage.CUSTOMER_SCENARIO, arity=StageArity.ONE),
+        RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.ONE),
+        RuleInput(artifact=ArtifactType.CUSTOMER_SCENARIO, arity=Arity.ONE),
     ),
     instruction=(
         "You will see one empathy map and the customer scenario for the same persona. "

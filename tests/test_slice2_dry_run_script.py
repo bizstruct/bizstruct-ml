@@ -43,7 +43,7 @@ async def test_the_script_reports_groups_scenarios_tokens_and_retries(script, tm
     assert all(s["interdependence_signal"] is False for s in report["scenarios"])
     patterns_row = report["rows"]["row_patterns_0"]
     assert patterns_row["consistency_retries"] == 2 and patterns_row["calls"] == 3
-    assert sum("multi_sided_requires_signal" in t or "MULTI_SIDED_PLATFORM" in t for t in patterns_row["triggers"]) == 2
+    assert sum("relation_type MULTI_SIDED" in t for t in patterns_row["triggers"]) == 2
     assert report["tokens_per_stage"]["patterns"]["calls"] == 3 and report["tokens_per_stage"]["patterns"]["total"] == 45
     printed = capsys.readouterr().out
     assert "== interdependence_signal per scenario" in printed and "== tokens per stage" in printed

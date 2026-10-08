@@ -4,21 +4,20 @@ Pure functions over `StageRow`s: no queues, no HTTP. Artifacts come out as the
 persisted domain models (via `parse_artifact`), never as raw dicts.
 """
 
-import inspect
-import types
-import typing
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from bizstruct_domain.schemas import (
+    ARTIFACT_HOLDERS,
     ARTIFACT_MODELS,
-    ARTIFACT_STAGE,
-    ConsistencyRule,
+    Arity,
+    ArtifactType,
+    InputBindingError,
     RuleInput,
     Stage,
-    StageArity,
     StageRow,
     StageStatus,
+    bind_inputs,
     parse_artifact,
 )
 from pydantic import BaseModel
@@ -79,15 +78,9 @@ def gather_closure(row: StageRow, rows: Mapping[str, StageRow]) -> dict[Stage, l
     return closure
 
 
-def _of_stage(artifacts: Sequence[BaseModel], stage: Stage) -> list[BaseModel]:
-    return [a for a in artifacts if _stage_of(a) == stage]
-
-
-_STAGE_OF_MODEL: dict[type, Stage] = {model: ARTIFACT_STAGE[t] for t, model in ARTIFACT_MODELS.items()}
-
-
-def _stage_of(artifact: BaseModel) -> Stage | None:
-    return _STAGE_OF_MODEL.get(type(artifact))
+def _of_type(artifacts: Sequence[BaseModel], artifact: ArtifactType) -> list[BaseModel]:
+    model = ARTIFACT_MODELS[artifact]
+    return [a for a in artifacts if isinstance(a, model)]
 
 
 def gather_inputs(
@@ -96,64 +89,54 @@ def gather_inputs(
     fresh_row: StageRow,
     fresh_artifacts: Sequence[BaseModel],
     rows: Mapping[str, StageRow],
-    expected_types: Sequence[tuple[type, ...] | None] | None = None,
-) -> list[Any]:
-    """Gather the arguments of a `ConsistencyRule`/`JudgeCheck`, in `inputs` order.
+) -> list[tuple[Any, ...]]:
+    """Argument tuples for a `ConsistencyRule`/`JudgeCheck` (ADR-0012): one tuple, or one per
+    instance of the `EACH` input. The kinds are applied by the domain's `bind_inputs`; this
+    function gathers its CANDIDATES per artifact type.
 
-    `fresh_artifacts` stand in for whatever `fresh_row` held before: the row
-    was just (re)generated, so its stored artifacts are stale.
+    `fresh_artifacts` stand in for whatever `fresh_row` held before: the row was just
+    (re)generated, so its stored artifacts are stale and never read from `rows`.
 
-    - ONE: the single artifact of that stage reachable from the fresh row or
-      its direct refs. Zero or several is a `ContextError` (several is the
-      ambiguity error), except an absent optional input, which is `None`.
-    - MANY: the stage's instances from the fresh row's direct refs if its
-      `refs` name that stage (the group is defined by the row's refs; every
-      referenced row must exist, be DONE and hold artifacts, else
-      `ContextError`), otherwise from the DONE rows of the closure; plus the
-      fresh artifacts of that stage in both cases. An absent optional input
-      is `[]`.
+    - `MANY`, `EACH`, `FINAL`: the fresh artifacts of the type plus, for each stage that can hold
+      the type (`ARTIFACT_HOLDERS`, a Canvas lives in `canvas` and `swot_errc_cycle`): the
+      instances of the rows `refs` names under that stage (every one must exist, be DONE and
+      hold artifacts, else `ContextError`; the group is defined by the row's refs), otherwise
+      those of the DONE rows of that stage in the closure. `FINAL` also needs the Swots of the
+      cycle, gathered the same way.
+    - `ONE`: the fresh artifacts of the type plus those of the rows the fresh row's `refs` name
+      (any key). If that yields NO candidate, the same holder rule as above applies (a row whose
+      refs name no holder stage of the type falls back to the closure; one that names a holder
+      stage must have usable rows or it is a `ContextError`). Several candidates stay an error.
 
-    `expected_types[i]`, when given, narrows input i to those model classes; it
-    tells apart the artifact types of a stage that has several (Swot/Errc).
+    Raises `ContextError` when a required input is missing or a `ONE` is ambiguous.
     """
     done = [r for r in rows.values() if r.status == StageStatus.DONE and r.id != fresh_row.id]
-    direct = [rows[i] for ids in fresh_row.refs.values() for i in ids if i in rows]
-    gathered: list[Any] = []
-    for index, spec in enumerate(inputs):
-        wanted = expected_types[index] if expected_types is not None else None
-
-        def narrow(items: list[BaseModel], wanted: tuple[type, ...] | None = wanted) -> list[BaseModel]:
-            return [a for a in items if isinstance(a, wanted)] if wanted else items
-
-        if spec.arity == StageArity.ONE:
-            pool = list(fresh_artifacts)
-            for ref in direct:
-                if ref.id != fresh_row.id:
-                    pool.extend(parse_row_artifacts(ref))
-            found = narrow(_of_stage(pool, spec.stage))
-            if len(found) > 1:
-                raise ContextError(
-                    f"ambiguous input: {len(found)} {spec.stage.value} artifacts reachable from row "
-                    f"{fresh_row.id}: {[getattr(a, 'id', '?') for a in found]}"
-                )
-            if not found:
-                if spec.optional:
-                    gathered.append(None)
-                    continue
-                raise ContextError(f"no {spec.stage.value} artifact reachable from row {fresh_row.id}")
-            gathered.append(found[0])
-        else:
-            pool = list(fresh_artifacts)
-            if fresh_row.refs.get(spec.stage):
-                pool.extend(_direct_artifacts(fresh_row, spec.stage, rows))
-            else:
-                for other in done:
-                    pool.extend(parse_row_artifacts(other))
-            found = narrow(_of_stage(pool, spec.stage))
-            if not found and not spec.optional:
-                raise ContextError(f"no {spec.stage.value} artifacts in the closure of row {fresh_row.id}")
-            gathered.append(found)
-    return gathered
+    direct = [rows[i] for ids in fresh_row.refs.values() for i in ids if i in rows and i != fresh_row.id]
+    candidates: dict[ArtifactType, list[BaseModel]] = {}
+    for spec in inputs:
+        wanted = [spec.artifact, ArtifactType.SWOT] if spec.arity is Arity.FINAL else [spec.artifact]
+        for artifact in wanted:
+            if artifact in candidates:
+                continue
+            pool = _of_type(fresh_artifacts, artifact)
+            if spec.arity is Arity.ONE:
+                for ref in direct:
+                    pool.extend(_of_type(parse_row_artifacts(ref), artifact))
+            if spec.arity is not Arity.ONE or not pool:
+                # MANY, EACH, FINAL always; ONE only when its own pool found nothing (ADR-0001)
+                for holder in ARTIFACT_HOLDERS[artifact]:
+                    if fresh_row.refs.get(holder):
+                        # the row names this holder stage: its rows must be usable, else ContextError
+                        pool.extend(_of_type(_direct_artifacts(fresh_row, holder, rows), artifact))
+                    else:
+                        for other in done:
+                            if other.stage == holder:
+                                pool.extend(_of_type(parse_row_artifacts(other), artifact))
+            candidates[artifact] = pool
+    try:
+        return bind_inputs(inputs, candidates)
+    except InputBindingError as e:
+        raise ContextError(f"row {fresh_row.id}: {e}") from e
 
 
 def _direct_artifacts(fresh_row: StageRow, stage: Stage, rows: Mapping[str, StageRow]) -> list[BaseModel]:
@@ -169,29 +152,3 @@ def _direct_artifacts(fresh_row: StageRow, stage: Stage, rows: Mapping[str, Stag
             raise ContextError(f"row {fresh_row.id} refs {stage.value} row {row_id}, which has no artifacts")
         artifacts.extend(parse_row_artifacts(ref))
     return artifacts
-
-
-def expected_types_of(rule: ConsistencyRule) -> list[tuple[type, ...] | None]:
-    """Model classes each parameter of a rule's `check` is annotated with
-    (`None` where the annotation names no model class)."""
-    try:
-        hints = typing.get_type_hints(rule.check)
-    except Exception:
-        return [None] * len(rule.inputs)
-    names = [n for n in inspect.signature(rule.check).parameters]
-    return [_classes(hints.get(name)) for name in names[: len(rule.inputs)]]
-
-
-def _classes(annotation: Any) -> tuple[type, ...] | None:
-    if annotation is None:
-        return None
-    origin = typing.get_origin(annotation)
-    if origin in (list, Sequence):
-        args = typing.get_args(annotation)
-        return _classes(args[0]) if args else None
-    if origin in (typing.Union, types.UnionType):
-        classes = [c for arg in typing.get_args(annotation) if arg is not type(None) for c in (_classes(arg) or ())]
-        return tuple(classes) or None
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return (annotation,)
-    return None

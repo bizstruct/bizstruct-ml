@@ -119,7 +119,7 @@ async def test_canvas_row_k_uses_patterns_group_k_and_only_that_groups_maps(shap
         assert isinstance(canvas, Canvas)
         assert canvas.group_id == patterns.groups[k].id
         assert canvas.empathy_map_ids == [em_id(n - 1) for n in shape.groups[k]] == patterns.groups[k].empathy_map_ids
-        assert canvas.version == 1 and canvas.previous_version_id is None and canvas.is_final is False
+        assert canvas.version == 1 and canvas.previous_version_id is None
         assert canvas.id == derive_artifact_id(row.id, ArtifactType.CANVAS, 1)
 
 
@@ -233,12 +233,12 @@ async def test_the_canvas_judge_gets_the_groups_maps_and_scenarios_not_the_proje
 async def test_gather_inputs_gives_a_patterns_row_all_maps_through_the_closure():
     from bizstruct_ml.core.consistency import applicable_checks
     from bizstruct_ml.core.context import gather_inputs, rows_by_id
-    from bizstruct_domain.schemas import RuleInput, StageArity
+    from bizstruct_domain.schemas import Arity, ArtifactType, RuleInput
 
     backend = seed(SPLIT_IN_THREE)
     rows = rows_by_id(backend.closure_of("row_patterns_0"))
-    (maps,) = gather_inputs(
-        [RuleInput(stage=Stage.EMPATHY_MAP, arity=StageArity.MANY)], fresh_row=backend.rows["row_patterns_0"], fresh_artifacts=[], rows=rows
+    ((maps,),) = gather_inputs(
+        [RuleInput(artifact=ArtifactType.EMPATHY_MAP, arity=Arity.MANY)], fresh_row=backend.rows["row_patterns_0"], fresh_artifacts=[], rows=rows
     )
     assert len(maps) == 3
     assert applicable_checks(backend.rows["row_patterns_0"], rows) != []
