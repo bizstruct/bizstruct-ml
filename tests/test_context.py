@@ -98,9 +98,13 @@ def test_one_input_ignores_artifacts_that_are_not_directly_reachable():
         gather_inputs([ONE_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
 
 
-def test_many_input_collects_every_done_artifact_in_the_closure():
-    fresh = scenario_row("row_cs_0", "row_em_0")
-    rows = rows_by_id([done_empathy_row("row_em_0"), done_empathy_row("row_em_1", "Taras"), fresh])
+def test_many_input_falls_back_to_the_closure_when_the_direct_refs_do_not_name_the_stage():
+    # a patterns-like row: refs name the scenarios only, so the empathy maps come from the closure
+    scenarios = [scenario_row(f"row_cs_{k}", f"row_em_{k}") for k in range(2)]
+    fresh = StageRow(id="row_patterns", stage=Stage.PATTERNS, status=StageStatus.RUNNING, attempt_id="a",
+                     refs={Stage.CUSTOMER_SCENARIO: [r.id for r in scenarios]})
+    ems = [done_empathy_row("row_em_0"), done_empathy_row("row_em_1", "Taras")]
+    rows = rows_by_id([*ems, *scenarios, fresh])
     (found,) = gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[], rows=rows)
     assert sorted(a.persona_name for a in found) == ["Olena", "Taras"]
 
@@ -134,3 +138,111 @@ def test_expected_types_follow_the_rule_signature():
     assert expected_types_of(by_id["multi_sided_requires_signal"]) == [(CustomerScenario,), (Patterns,)]
     errc_rule = by_id["errc_move_targets_correct_canvas_version"]
     assert expected_types_of(errc_rule)[1] == (Errc,)
+
+
+# -- MANY scoped by the row's refs: the group is defined by the refs -------------------------------
+
+
+def done_scenario_row(row_id: str, em_row_id: str) -> StageRow:
+    from bizstruct_domain.schemas import CustomerScenario
+    from tests.test_slice1_stages import SCENARIO
+
+    em_id = derive_artifact_id(em_row_id, ArtifactType.EMPATHY_MAP)
+    model = CustomerScenario.from_generated(SCENARIO, id=derive_artifact_id(row_id, ArtifactType.CUSTOMER_SCENARIO), empathy_map_id=em_id)
+    return StageRow(id=row_id, stage=Stage.CUSTOMER_SCENARIO, status=StageStatus.DONE, attempt_id="a",
+                    refs={Stage.EMPATHY_MAP: [em_row_id]},
+                    artifacts=[ArtifactRecord(id=model.id, type=ArtifactType.CUSTOMER_SCENARIO, data=model.model_dump(mode="json"))])
+
+
+MANY_CS = RuleInput(stage=Stage.CUSTOMER_SCENARIO, arity=StageArity.MANY)
+
+
+def project(groups: list[list[int]]):
+    """A project with sum(len(g)) segments, a patterns row over all of them and one canvas row per group.
+    Returns (rows by id, canvas rows, patterns row). Like be builds them (ADR-0011)."""
+    n = sum(len(g) for g in groups)
+    ems = [done_empathy_row(f"row_em_{k}", f"Persona {k}") for k in range(n)]
+    scs = [done_scenario_row(f"row_cs_{k}", f"row_em_{k}") for k in range(n)]
+    patterns = StageRow(id="row_patterns", stage=Stage.PATTERNS, status=StageStatus.RUNNING, attempt_id="a",
+                        refs={Stage.CUSTOMER_SCENARIO: [r.id for r in scs]})
+    canvases = [
+        StageRow(id=f"row_canvas_{i}", stage=Stage.CANVAS, instance_index=i, status=StageStatus.RUNNING, attempt_id="a",
+                 refs={Stage.EMPATHY_MAP: [f"row_em_{k}" for k in g], Stage.CUSTOMER_SCENARIO: [f"row_cs_{k}" for k in g],
+                       Stage.PATTERNS: ["row_patterns"]})
+        for i, g in enumerate(groups)
+    ]
+    return rows_by_id([brief_row(), *ems, *scs, patterns, *canvases]), canvases, patterns
+
+
+def personas(found) -> list[str]:
+    return sorted(a.persona_name for a in found)
+
+
+@pytest.mark.parametrize(
+    "groups",
+    [
+        [[0]],                       # N = 1, unified
+        [[0, 1, 2]],                 # one group of three, unified
+        [[0, 1], [2]],               # split into 2
+        [[0], [1], [2]],             # split into 3
+    ],
+)
+def test_a_canvas_row_gets_only_its_groups_maps_and_scenarios(groups):
+    rows, canvases, _ = project(groups)
+    for canvas, group in zip(canvases, groups):
+        found_em, found_cs = gather_inputs([MANY_EM, MANY_CS], fresh_row=canvas, fresh_artifacts=[], rows=rows)
+        assert personas(found_em) == sorted(f"Persona {k}" for k in group)
+        assert sorted(s.id for s in found_cs) == sorted(derive_artifact_id(f"row_cs_{k}", ArtifactType.CUSTOMER_SCENARIO) for k in group)
+
+
+def test_a_split_projects_closure_really_holds_every_group_so_scoping_is_what_separates_them():
+    from bizstruct_ml.core.context import gather_closure
+
+    rows, canvases, _ = project([[0], [1], [2]])
+    closure = gather_closure(canvases[1], rows)
+    assert personas(closure[Stage.EMPATHY_MAP]) == ["Persona 0", "Persona 1", "Persona 2"]
+
+
+@pytest.mark.parametrize("groups", [[[0]], [[0, 1, 2]], [[0, 1], [2]], [[0], [1], [2]]])
+def test_the_patterns_row_gets_all_maps_from_the_closure_and_all_scenarios_directly(groups):
+    rows, _, patterns = project(groups)
+    n = sum(len(g) for g in groups)
+    found_em, found_cs = gather_inputs([MANY_EM, MANY_CS], fresh_row=patterns, fresh_artifacts=[], rows=rows)
+    assert personas(found_em) == sorted(f"Persona {k}" for k in range(n))
+    assert len(found_cs) == n
+
+
+def test_the_fresh_rows_own_artifacts_of_the_stage_are_included_next_to_the_referenced_ones():
+    rows, canvases, _ = project([[0, 1]])
+    own = empathy_model("row_canvas_0", "Own version")  # e.g. canvas versions 2..5 held by the cycle row
+    (found,) = gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[own], rows=rows)
+    assert personas(found) == ["Own version", "Persona 0", "Persona 1"]
+
+
+def test_the_fresh_rows_stored_artifacts_are_stale_and_ignored():
+    rows, canvases, _ = project([[0]])
+    stale = empathy_model("row_canvas_0", "Stale")
+    canvases[0].artifacts = [ArtifactRecord(id=stale.id, type=ArtifactType.EMPATHY_MAP, data=stale.model_dump(mode="json"))]
+    (found,) = gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[], rows=rows)
+    assert personas(found) == ["Persona 0"]
+
+
+def test_a_directly_referenced_row_that_is_not_done_is_an_error():
+    rows, canvases, _ = project([[0, 1]])
+    rows["row_em_1"] = rows["row_em_1"].model_copy(update={"status": StageStatus.RUNNING})
+    with pytest.raises(ContextError, match="row_em_1.*running, not done"):
+        gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[], rows=rows)
+
+
+def test_a_directly_referenced_row_without_artifacts_is_an_error():
+    rows, canvases, _ = project([[0, 1]])
+    rows["row_em_1"] = rows["row_em_1"].model_copy(update={"artifacts": []})
+    with pytest.raises(ContextError, match="row_em_1.*no artifacts"):
+        gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[], rows=rows)
+
+
+def test_a_directly_referenced_row_missing_from_the_snapshot_is_an_error():
+    rows, canvases, _ = project([[0, 1]])
+    del rows["row_em_1"]
+    with pytest.raises(ContextError, match="row_em_1.*not in the snapshot"):
+        gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[], rows=rows)
