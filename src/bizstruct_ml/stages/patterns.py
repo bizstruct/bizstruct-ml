@@ -1,12 +1,15 @@
 """Patterns generator. All Patterns logic (aliases, NetScore structure, group ids) is here and in
 the prompt and `patterns_validation`, so it can be replaced when NetScore moves into the domain."""
 
+import re
 import uuid
+from collections.abc import Sequence
 from typing import ClassVar
 
 from bizstruct_domain.schemas import (
     ARTIFACT_ID_NAMESPACE,
     ArtifactType,
+    Patterns,
     PatternsGenerated,
     Stage,
     derive_artifact_id,
@@ -30,6 +33,21 @@ class PatternsGenerator(StageGenerator):
 
     def build_messages(self, ctx: StageContext) -> list[dict]:
         return prompt.build_messages(ctx)
+
+    def present_feedback(self, message: str, ctx: StageContext, produced: Sequence[BaseModel]) -> str:
+        """The model saw aliases S1..SN, never ids: say empathy map ids as their aliases and the group ids
+        (which the system assigned, by position) as "group #i (S..)"."""
+        aliases = {s.empathy_map.id: s.alias for s in prompt.segments_of(ctx)}
+        patterns = next((m for m in produced if isinstance(m, Patterns)), None)
+        for position, group in enumerate(patterns.groups if patterns else [], start=1):
+            members = ", ".join(aliases.get(i, "?") for i in group.empathy_map_ids)
+            message = message.replace(group.id, f"group #{position} ({members})")
+        for map_id, alias in aliases.items():
+            message = message.replace(map_id, alias)
+        # the domain wording "Group <id> (empathy maps <ids>) has ..." now repeats itself; say it once
+        message = re.sub(r"\bGroup (group #\d+ \([^)]*\))", r"\1", message)
+        message = re.sub(r"(group #\d+ \([^)]*\)) \(empathy maps [^)]*\)", r"\1", message)
+        return message[:1].upper() + message[1:]
 
     def to_artifacts(self, generated: BaseModel, ctx: StageContext) -> list[tuple[ArtifactType, BaseModel]]:
         assert isinstance(generated, PatternsGenerated)

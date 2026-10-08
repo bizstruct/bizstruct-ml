@@ -285,3 +285,34 @@ def test_the_system_prompt_states_the_method_and_its_status():
 
 async def test_the_runner_reports_the_patterns_prompt_version():
     assert stage_runner(FakeLLM([ONE.patterns])).prompt_version(Stage.PATTERNS) == "1"
+
+
+# -- feedback in the model's terms (ids -> aliases) ---------------------------------------------------------------------
+
+
+async def test_the_regeneration_prompt_names_aliases_and_the_group_not_ids():
+    shape = multi_sided_without_signal()
+    llm = FakeLLM([shape.patterns, FIXED])
+    await run_patterns(seed(shape), llm, FakeJudgeModel([NO_FINDINGS]))
+    feedback = llm.calls[1]["messages"][-1]["content"]
+    assert "- Group #1 (S1, S2, S3) has relation_type MULTI_SIDED" in feedback
+    assert "interdependence_signal=True" in feedback
+    assert group_id(ROW, 0) not in feedback and not any(em_id(k) in feedback for k in range(3))
+    assert "Group group" not in feedback and "(empathy maps" not in feedback
+
+
+async def test_feedback_maps_each_group_of_a_split_project_by_position():
+    from bizstruct_ml.stages.patterns import PatternsGenerator
+    from bizstruct_ml.core.stage_runner import StageContext
+    from bizstruct_ml.core.context import gather_closure, gather_context, rows_by_id
+
+    backend = seed(SPLIT_IN_TWO)
+    outcome = await run_patterns(backend, FakeLLM([SPLIT_IN_TWO.patterns]))
+    patterns = patterns_of(outcome)
+    rows = rows_by_id(backend.closure_of(ROW))
+    row = backend.rows[ROW]
+    ctx = StageContext(project_id="project_001", idea="x", language="en", row=row, artifacts=gather_context(row, rows),
+                       closure=gather_closure(row, rows), rows=rows)
+    message = f"Group {patterns.groups[1].id} (empathy maps {em_id(2)}) has a problem; see also {patterns.groups[0].id} and {em_id(0)}."
+    shown = PatternsGenerator().present_feedback(message, ctx, [patterns])
+    assert shown == "Group #2 (S3) has a problem; see also group #1 (S1, S2) and S1."
