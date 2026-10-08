@@ -19,7 +19,8 @@ from bizstruct_ml.llm.prompts._canvas_view import render_canvas, section_title
 from bizstruct_ml.llm.prompts._shared import field_guide, language_rule
 from bizstruct_ml.llm.prompts.customer_scenario import brief_of
 
-PROMPT_VERSION = "1"
+# 1 = slice 3; 2 = anchored 1-5 scores for opportunities and threats.
+PROMPT_VERSION = "2"
 
 # One plain-words gloss per catalog question: what the threat is about. The model answers each for THIS canvas.
 THREAT_GLOSS: dict[ThreatQuestion, str] = {
@@ -70,9 +71,15 @@ For every cluster:
 - axis_statements (2 to 5): each is one aspect of the cluster written twice, as a positive statement and as its negative opposite. score says which \
 of the two describes THIS canvas and how strongly: 1 to 5 for the positive statement, -5 to -1 for the negative one, never 0 (you must lean one way). \
 importance (1 to 10) is how much the aspect matters for the model; certainty (1 to 10) is how sure you are of your evaluation.
-- opportunities (1 to 7): things the model could exploit; score 1 to 5 is how strongly each applies.
+- opportunities (1 to 7): things the model could exploit; score 1 to 5 on the scale below.
 - threats: the fixed catalog of the cluster, each question exactly once, in your own words for this canvas. text is one or two sentences about THIS \
-canvas; score 1 to 5 is how strongly the threat applies (1 barely, 5 very strongly). A threat that barely applies still gets its row with a low score.
+canvas; score 1 to 5 on the scale below. A threat that the canvas gives no sign of still gets its row, with score 1.
+
+Scale for the score of every opportunity and every threat (it replaces any other wording of the score in the field list):
+- 1 = no evidence of this in the canvas.
+- 3 = plausible, but not visible in the canvas.
+- 5 = already visible in the canvas.
+Use the whole range from 1 to 5, and use the middle values 2 and 4 as well. Do not give everything the same high score: on any real canvas many of the threats and opportunities have little or no support in it, and those get 1 or 2.
 
 The clusters, their building blocks and the threats to rate:
 {_catalog()}

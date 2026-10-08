@@ -85,7 +85,7 @@ def test_the_swot_system_prompt_lists_every_catalog_question_with_its_own_gloss(
     for cluster in SwotCluster:
         assert f"cluster {cluster.value}" in system
     assert "never 0" in system and "derived ONLY from the canvas" in system
-    assert swot_prompt.PROMPT_VERSION == "1" and errc_prompt.PROMPT_VERSION == "2"
+    assert swot_prompt.PROMPT_VERSION == "2" and errc_prompt.PROMPT_VERSION == "2"
 
 
 def test_no_gloss_repeats_a_book_sentence():
@@ -113,3 +113,26 @@ def test_errc_prompt_asks_for_exact_card_text_and_shows_only_swot_signals():
     # threats rated below 3 are not signals
     low = swot_scoring(21, "row", 1)
     assert "threat " not in errc_prompt.swot_signals(low)
+
+
+GOLDEN_SCALE = """Scale for the score of every opportunity and every threat (it replaces any other wording of the score in the field list):
+- 1 = no evidence of this in the canvas.
+- 3 = plausible, but not visible in the canvas.
+- 5 = already visible in the canvas.
+Use the whole range from 1 to 5, and use the middle values 2 and 4 as well. Do not give everything the same high score: on any real canvas many of the threats and opportunities have little or no support in it, and those get 1 or 2."""
+
+
+def test_the_swot_prompt_anchors_the_opportunity_and_threat_scores():
+    system = swot_prompt.SYSTEM
+    assert GOLDEN_SCALE in system
+    assert system.index(GOLDEN_SCALE) < system.index("The clusters, their building blocks and the threats to rate:")
+    assert system.count("score 1 to 5 on the scale below") == 2  # opportunities and threats
+    assert "barely, 5 very strongly" not in system
+    # the domain scales are untouched: axis scores keep their own sign rule
+    assert "1 to 5 for the positive statement, -5 to -1 for the negative one, never 0" in system
+
+
+def test_the_swot_prompt_version_and_the_cycle_generators_version_string():
+    from bizstruct_ml.stages.swot_errc_cycle import SwotErrcCycleGenerator
+
+    assert SwotErrcCycleGenerator.prompt_version == "swot=2,errc=2"

@@ -324,7 +324,7 @@ def test_the_runner_registers_the_cycle_generator_only_with_its_two_contracts():
 
     with pytest.raises(ValueError, match="must declare that stage and exactly its generation contracts"):
         StageRunner({CYCLE: Wrong()}, FakeLLM([None]), ConsistencyJudge(FakeJudgeModel(), retry_wait=0))
-    assert stage_runner(FakeLLM([None])).prompt_version(CYCLE) == "swot=1,errc=2"
+    assert stage_runner(FakeLLM([None])).prompt_version(CYCLE) == "swot=2,errc=2"
 
 
 def test_a_gap_in_the_swot_versions_is_refused_before_anything_is_returned():
