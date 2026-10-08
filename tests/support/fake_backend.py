@@ -2,12 +2,17 @@
 
 Serves the snapshot of a row's closure (`GET …?row=`), applies a posted
 `StageResult` the way be would (attempt check, schema check, status transitions,
-consistency decision) and creates rows as the graph unfolds: after `brief`, one
-`empathy_map` row per segment candidate; after each empathy map, a
-`customer_scenario` and an `ideation` row. It talks HTTP through an httpx
-`MockTransport`, so the real `BackendClient` is exercised unchanged.
+consistency decision) and creates rows as the graph unfolds, per ADR-0011:
+after `brief`, one `empathy_map` row per segment candidate; after each empathy
+map, a `customer_scenario` and an `ideation` row (instance_index 0: the segment
+is found through refs); once every scenario and ideation row exists, one
+`patterns` row (refs: all of them); once Patterns is DONE, one `canvas` row per
+group from the domain's `canvas_rows_for` (instance_index = position of the
+group in `Patterns.groups`). It talks HTTP through an httpx `MockTransport`, so
+the real `BackendClient` is exercised unchanged.
 
-Slice 1 only knows these four stages; later slices extend `expand`.
+`through` is the last stage the fake creates rows for: slice 1 tests keep the
+default (`ideation`), slice 2 passes `Stage.CANVAS`.
 """
 
 import json
@@ -18,6 +23,7 @@ from bizstruct_domain.schemas import (
     ARTIFACT_MODELS,
     ArtifactType,
     Brief,
+    Patterns,
     ProjectSnapshot,
     QueueMessage,
     RowTarget,
@@ -27,7 +33,9 @@ from bizstruct_domain.schemas import (
     StageRow,
     StageStatus,
     parse_artifact,
+    canvas_rows_for,
     ready_rows,
+    row_of_artifact,
 )
 from pydantic import ValidationError
 
@@ -39,8 +47,15 @@ PROJECT_ID = "project_001"
 
 
 class FakeBackend:
-    def __init__(self, idea: str = "Farm produce delivery", language: str = "en", enabled_optional: list[Stage] | None = None) -> None:
+    def __init__(
+        self,
+        idea: str = "Farm produce delivery",
+        language: str = "en",
+        enabled_optional: list[Stage] | None = None,
+        through: Stage = Stage.IDEATION,
+    ) -> None:
         self.idea = idea
+        self.through = through
         self.language = language
         self.enabled_optional = enabled_optional or []
         self.rows: dict[str, StageRow] = {}
@@ -51,8 +66,11 @@ class FakeBackend:
 
     # -- be's own bookkeeping ------------------------------------------------
 
-    def add_row(self, stage: Stage, instance_index: int, refs: dict[Stage, list[str]]) -> StageRow:
-        row = StageRow(id=f"row_{stage.value}_{instance_index}", stage=stage, instance_index=instance_index,
+    def add_row(self, stage: Stage, instance_index: int, refs: dict[Stage, list[str]], suffix: int | None = None) -> StageRow:
+        """`suffix` only names the row (default: the instance_index); customer_scenario and ideation
+        rows are named after their segment but all have instance_index 0 (ADR-0011)."""
+        name = instance_index if suffix is None else suffix
+        row = StageRow(id=f"row_{stage.value}_{name}", stage=stage, instance_index=instance_index,
                        status=StageStatus.PENDING, refs=refs)
         self.rows[row.id] = row
         return row
@@ -73,7 +91,40 @@ class FakeBackend:
                 continue
             for stage in (Stage.CUSTOMER_SCENARIO, Stage.IDEATION):
                 if not any(r.refs.get(Stage.EMPATHY_MAP) == [empathy.id] for r in self.rows_of(stage)):
-                    self.add_row(stage, empathy.instance_index, {Stage.EMPATHY_MAP: [empathy.id]})
+                    self.add_row(stage, 0, {Stage.EMPATHY_MAP: [empathy.id]}, suffix=empathy.instance_index)
+        if self.through == Stage.IDEATION:
+            return
+        empathies = self.rows_of(Stage.EMPATHY_MAP)
+        scenarios, ideations = self.rows_of(Stage.CUSTOMER_SCENARIO), self.rows_of(Stage.IDEATION)
+        if (
+            empathies
+            and len(scenarios) == len(ideations) == len(empathies)
+            and not self.rows_of(Stage.PATTERNS)
+        ):
+            self.add_row(Stage.PATTERNS, 0, {
+                Stage.CUSTOMER_SCENARIO: [r.id for r in scenarios],
+                Stage.IDEATION: [r.id for r in ideations],
+            })
+        (patterns_row,) = self.rows_of(Stage.PATTERNS) or [None]
+        if self.through == Stage.PATTERNS or patterns_row is None or patterns_row.status != StageStatus.DONE:
+            return
+        if not self.rows_of(Stage.CANVAS):
+            patterns = parse_artifact(patterns_row.artifacts[0])
+            assert isinstance(patterns, Patterns)
+            for i, spec in enumerate(canvas_rows_for(patterns)):
+                group_maps = []
+                for empathy_map_id in spec.empathy_map_ids:
+                    found = row_of_artifact(empathies, empathy_map_id)
+                    assert found is not None, f"no empathy_map row holds {empathy_map_id}"
+                    group_maps.append(found)
+                ids = {r.id for r in group_maps}
+                self.add_row(Stage.CANVAS, i, {
+                    Stage.BRIEF: [self.rows_of(Stage.BRIEF)[0].id],
+                    Stage.EMPATHY_MAP: [r.id for r in group_maps],
+                    Stage.CUSTOMER_SCENARIO: [r.id for r in scenarios if r.refs[Stage.EMPATHY_MAP][0] in ids],
+                    Stage.IDEATION: [r.id for r in ideations if r.refs[Stage.EMPATHY_MAP][0] in ids],
+                    Stage.PATTERNS: [patterns_row.id],
+                })
 
     def dispatch_ready(self) -> list[QueueMessage]:
         """Mark every ready row RUNNING with a fresh attempt and return its message."""
