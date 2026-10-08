@@ -56,6 +56,7 @@ MAX_CONSISTENCY_RETRIES = 2
 # is unlikely to fit on a third try either, so the row fails with a clear message.
 MAX_LENGTH_RETRIES = 1
 _MAX_FAILURE_MESSAGE = 2000
+_MAX_FEEDBACK_ERROR = 1500
 
 
 class GenerationFailed(Exception):
@@ -127,6 +128,14 @@ def _record(row: StageRow, artifact_type: ArtifactType, model: BaseModel) -> Art
     `Brief` has none, so its record id is derived like any other (index 0)."""
     artifact_id = getattr(model, "id", None) or derive_artifact_id(row.id, artifact_type, 0)
     return ArtifactRecord(id=artifact_id, type=artifact_type, data=model.model_dump(mode="json"))
+
+
+def _conversion_feedback_message(error: str) -> dict:
+    return {
+        "role": "user",
+        "content": "Your previous answer could not be used, for this reason:\n"
+        f"{error[:_MAX_FEEDBACK_ERROR]}\nFix it and answer again.",
+    }
 
 
 def _feedback_message(messages: Sequence[str]) -> dict:
@@ -229,19 +238,23 @@ class StageRunner:
             messages = [*messages, _feedback_message(feedback)]
         attempts = {"n": 0}
         length_hits = {"n": 0}
+        # Why the last answer could not be converted (a pydantic or ValueError from
+        # `to_artifacts`); the next attempt shows it to the model as feedback.
+        conversion_error: list[str] = []
 
         async def attempt() -> list[tuple[ArtifactType, BaseModel]]:
             attempts["n"] += 1
+            call_messages = [*messages, _conversion_feedback_message(conversion_error[-1])] if conversion_error else messages
             metadata = {
                 "attempt": attempts["n"],
                 "consistency_round": consistency_round,
                 "prompt_version": generator.prompt_version,
             }
             with tracing.generation_span(
-                "llm_call", model=self._llm.model_name, input=messages, metadata=metadata
+                "llm_call", model=self._llm.model_name, input=call_messages, metadata=metadata
             ) as span:
                 try:
-                    generated = await self._llm.generate_structured(messages, contract)
+                    generated = await self._llm.generate_structured(call_messages, contract)
                 except LLMError as e:
                     # The finish reason (and the usage of a cut-off answer) goes on the span.
                     span.update(
@@ -278,13 +291,17 @@ class StageRunner:
                 retry_worthy = [v for v in findings if v.retry_worthy]
                 if retry_worthy:
                     raise DegenerateTextError(retry_worthy)
-            models = generator.to_artifacts(generated, ctx)
-            if not models:
-                raise ValueError(f"generator for {ctx.row.stage.value} produced no artifacts")
-            # Validate what be will validate, so a bad artifact is a generation
-            # failure here and not a 422 (and a dead-lettered message) there.
-            for artifact_type, model in models:
-                parse_artifact(_record(ctx.row, artifact_type, model))
+            try:
+                models = generator.to_artifacts(generated, ctx)
+                if not models:
+                    raise ValueError(f"generator for {ctx.row.stage.value} produced no artifacts")
+                # Validate what be will validate, so a bad artifact is a generation
+                # failure here and not a 422 (and a dead-lettered message) there.
+                for artifact_type, model in models:
+                    parse_artifact(_record(ctx.row, artifact_type, model))
+            except ValueError as e:
+                conversion_error[:] = [str(e)]
+                raise
             return models
 
         return await retry_async(
