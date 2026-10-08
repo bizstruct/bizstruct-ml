@@ -44,7 +44,7 @@ from pydantic import BaseModel, ConfigDict
 from bizstruct_ml.core.consistency import build_report, run_deterministic, run_judge
 from bizstruct_ml.core.context import ContextError, gather_closure, gather_context, rows_by_id
 from bizstruct_ml.judge.base import ConsistencyJudge
-from bizstruct_ml.llm.client import LLMError
+from bizstruct_ml.llm.client import LLMError, LLMLengthError
 from bizstruct_ml.llm.retry import retry_async
 from bizstruct_ml.observability import tracing
 from bizstruct_ml.validation.degenerate_text import DegenerateTextError, validate_block_text
@@ -52,7 +52,14 @@ from bizstruct_ml.validation.degenerate_text import DegenerateTextError, validat
 log = structlog.get_logger()
 
 MAX_CONSISTENCY_RETRIES = 2
+# A cut-off completion (finish_reason "length") is retried once: the same prompt
+# is unlikely to fit on a third try either, so the row fails with a clear message.
+MAX_LENGTH_RETRIES = 1
 _MAX_FAILURE_MESSAGE = 2000
+
+
+class GenerationFailed(Exception):
+    """Generation failed for a reason a retry will not fix; the row fails with this message."""
 
 
 class StructuredLLM(Protocol):
@@ -186,7 +193,7 @@ class StageRunner:
                 models = await self._generate(generator, ctx, contract, feedback, retries)
             except ContextError as e:
                 return self._failed(f"context: {e}")
-            except (LLMError, ValueError, DegenerateTextError) as e:
+            except (LLMError, ValueError, DegenerateTextError, GenerationFailed) as e:
                 return self._failed(str(e))
 
             with tracing.span("consistency_rules"):
@@ -221,21 +228,40 @@ class StageRunner:
         if feedback:
             messages = [*messages, _feedback_message(feedback)]
         attempts = {"n": 0}
+        length_hits = {"n": 0}
 
         async def attempt() -> list[tuple[ArtifactType, BaseModel]]:
             attempts["n"] += 1
+            metadata = {
+                "attempt": attempts["n"],
+                "consistency_round": consistency_round,
+                "prompt_version": generator.prompt_version,
+            }
             with tracing.generation_span(
-                "llm_call",
-                model=self._llm.model_name,
-                input=messages,
-                metadata={
-                    "attempt": attempts["n"],
-                    "consistency_round": consistency_round,
-                    "prompt_version": generator.prompt_version,
-                },
+                "llm_call", model=self._llm.model_name, input=messages, metadata=metadata
             ) as span:
-                generated = await self._llm.generate_structured(messages, contract)
-                span.update(output=generated.model_dump(mode="json"), usage_details=self._llm.last_usage)
+                try:
+                    generated = await self._llm.generate_structured(messages, contract)
+                except LLMError as e:
+                    # The finish reason (and the usage of a cut-off answer) goes on the span.
+                    span.update(
+                        metadata={**metadata, "finish_reason": self._finish_reason()},
+                        usage_details=self._llm.last_usage,
+                        status_message=str(e),
+                    )
+                    if isinstance(e, LLMLengthError):
+                        length_hits["n"] += 1
+                        if length_hits["n"] > MAX_LENGTH_RETRIES:
+                            raise GenerationFailed(
+                                f"LLM output was cut off (finish_reason=length) on {length_hits['n']} attempts; "
+                                "the generation does not fit the output limit"
+                            ) from e
+                    raise
+                span.update(
+                    output=generated.model_dump(mode="json"),
+                    usage_details=self._llm.last_usage,
+                    metadata={**metadata, "finish_reason": self._finish_reason()},
+                )
             # Pydantic cannot see a valid-but-degenerate string (wrong script, padding,
             # repeated runs). A retry-worthy finding retries like a schema error and,
             # when retries run out, fails the row. Every finding goes on the span.
@@ -267,6 +293,9 @@ class StageRunner:
             wait_min=self._retry_wait,
             wait_max=self._retry_wait,
         )
+
+    def _finish_reason(self) -> str | None:
+        return getattr(self._llm, "last_finish_reason", None)
 
     @staticmethod
     def _failed(message: str) -> RunOutcome:

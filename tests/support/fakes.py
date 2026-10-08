@@ -34,6 +34,7 @@ class FakeLLM:
 
     model_name = "fake-llm"
     last_usage: dict[str, int] | None = None
+    last_finish_reason: str | None = None
 
     def __init__(self, replies: list[BaseModel | Exception | Callable[[list[dict], type[BaseModel]], BaseModel]]) -> None:
         self._replies = replies
@@ -42,6 +43,7 @@ class FakeLLM:
     async def generate_structured(self, messages: list[dict], schema: type[BaseModel]) -> BaseModel:
         self.calls.append({"messages": messages, "schema": schema})
         item = self._replies[min(len(self.calls), len(self._replies)) - 1]
+        self.last_finish_reason = getattr(item, "finish_reason", "stop") if isinstance(item, Exception) else "stop"
         if isinstance(item, Exception):
             raise item
         return item(messages, schema) if callable(item) else item
