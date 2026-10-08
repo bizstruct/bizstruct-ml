@@ -1,4 +1,11 @@
-from openai import AsyncAzureOpenAI, AsyncOpenAI, APIError, APITimeoutError
+from openai import (
+    APIError,
+    APITimeoutError,
+    AsyncAzureOpenAI,
+    AsyncOpenAI,
+    ContentFilterFinishReasonError,
+    LengthFinishReasonError,
+)
 from pydantic import BaseModel
 
 from bizstruct_ml.config import settings
@@ -12,6 +19,18 @@ GENERATOR_FAMILY = "openai"
 
 class LLMError(Exception):
     pass
+
+
+class LLMContentFilterError(LLMError):
+    """The completion ended with finish_reason "content_filter"."""
+
+    finish_reason = "content_filter"
+
+
+class LLMLengthError(LLMError):
+    """The completion ended with finish_reason "length": the output was cut off."""
+
+    finish_reason = "length"
 
 
 def _build_client() -> AsyncAzureOpenAI | AsyncOpenAI:
@@ -40,6 +59,13 @@ def _model_name() -> str:
     return settings.openai_model
 
 
+def _usage_of(completion) -> dict[str, int] | None:
+    usage = completion.usage
+    if usage is None:
+        return None
+    return {"input": usage.prompt_tokens, "output": usage.completion_tokens, "total": usage.total_tokens}
+
+
 class LLMClient:
     def __init__(self) -> None:
         self._client = _build_client()
@@ -49,6 +75,9 @@ class LLMClient:
         # generator owns its LLMClient and calls are sequential, so there's
         # no concurrency hazard in stashing this on the instance.
         self.last_usage: dict[str, int] | None = None
+        # The finish reason of the last call ("stop", "length", "content_filter"), for
+        # the same reason; None before the first call or when the call never got an answer.
+        self.last_finish_reason: str | None = None
 
     @property
     def model_name(self) -> str:
@@ -59,26 +88,27 @@ class LLMClient:
         messages: list[dict],
         schema: type[BaseModel],
     ) -> BaseModel:
+        self.last_usage = None
+        self.last_finish_reason = None
         try:
             completion = await self._client.beta.chat.completions.parse(
                 model=self._model,
                 messages=messages,
                 response_format=schema,
             )
-            usage = completion.usage
-            self.last_usage = (
-                {
-                    "input": usage.prompt_tokens,
-                    "output": usage.completion_tokens,
-                    "total": usage.total_tokens,
-                }
-                if usage is not None
-                else None
-            )
+            self.last_usage = _usage_of(completion)
+            self.last_finish_reason = completion.choices[0].finish_reason
             result = completion.choices[0].message.parsed
             if result is None:
                 raise LLMError("LLM returned empty parsed result")
             return result
+        except LengthFinishReasonError as e:
+            self.last_usage = _usage_of(e.completion)
+            self.last_finish_reason = LLMLengthError.finish_reason
+            raise LLMLengthError(f"LLM output was cut off (finish_reason=length): {e}") from e
+        except ContentFilterFinishReasonError as e:
+            self.last_finish_reason = LLMContentFilterError.finish_reason
+            raise LLMContentFilterError(f"LLM output was blocked (finish_reason=content_filter): {e}") from e
         except APITimeoutError as e:
             raise LLMError(f"LLM request timed out: {e}") from e
         except APIError as e:

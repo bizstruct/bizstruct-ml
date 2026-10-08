@@ -303,3 +303,20 @@ async def test_log_only_text_findings_do_not_retry_or_fail(monkeypatch):
     llm = FakeLLM([empathy_generated()])
     outcome = await run(runner(llm))
     assert outcome.success and len(llm.calls) == 1
+
+
+async def test_a_conversion_error_is_shown_to_the_model_on_the_next_attempt():
+    class PickyGenerator(EmpathyMapTestGenerator):
+        def to_artifacts(self, generated, ctx):
+            if generated.persona_name == "Bad":
+                raise ValueError("persona must not be Bad: pick another name")
+            return super().to_artifacts(generated, ctx)
+
+    llm = FakeLLM([empathy_generated("Bad"), empathy_generated("Good")])
+    r = StageRunner({Stage.EMPATHY_MAP: PickyGenerator()}, llm, ConsistencyJudge(FakeJudgeModel()), retry_wait=0)
+    outcome = await run(r)
+    assert outcome.success
+    first, second = (c["messages"] for c in llm.calls)
+    assert len(second) == len(first) + 1
+    assert "persona must not be Bad: pick another name" in second[-1]["content"]
+    assert all("could not be used" not in m["content"] for m in first)

@@ -106,8 +106,12 @@ def gather_inputs(
     - ONE: the single artifact of that stage reachable from the fresh row or
       its direct refs. Zero or several is a `ContextError` (several is the
       ambiguity error), except an absent optional input, which is `None`.
-    - MANY: every artifact of that stage among the DONE rows of the closure
-      (plus the fresh row). An absent optional input is `[]`.
+    - MANY: the stage's instances from the fresh row's direct refs if its
+      `refs` name that stage (the group is defined by the row's refs; every
+      referenced row must exist, be DONE and hold artifacts, else
+      `ContextError`), otherwise from the DONE rows of the closure; plus the
+      fresh artifacts of that stage in both cases. An absent optional input
+      is `[]`.
 
     `expected_types[i]`, when given, narrows input i to those model classes; it
     tells apart the artifact types of a stage that has several (Swot/Errc).
@@ -140,13 +144,31 @@ def gather_inputs(
             gathered.append(found[0])
         else:
             pool = list(fresh_artifacts)
-            for other in done:
-                pool.extend(parse_row_artifacts(other))
+            if fresh_row.refs.get(spec.stage):
+                pool.extend(_direct_artifacts(fresh_row, spec.stage, rows))
+            else:
+                for other in done:
+                    pool.extend(parse_row_artifacts(other))
             found = narrow(_of_stage(pool, spec.stage))
             if not found and not spec.optional:
                 raise ContextError(f"no {spec.stage.value} artifacts in the closure of row {fresh_row.id}")
             gathered.append(found)
     return gathered
+
+
+def _direct_artifacts(fresh_row: StageRow, stage: Stage, rows: Mapping[str, StageRow]) -> list[BaseModel]:
+    """Artifacts of the rows `fresh_row.refs` lists under `stage`; each must be a DONE row with artifacts."""
+    artifacts: list[BaseModel] = []
+    for row_id in fresh_row.refs[stage]:
+        ref = rows.get(row_id)
+        if ref is None:
+            raise ContextError(f"row {fresh_row.id} refs {stage.value} row {row_id}, which is not in the snapshot")
+        if ref.status != StageStatus.DONE:
+            raise ContextError(f"row {fresh_row.id} refs {stage.value} row {row_id}, which is {ref.status.value}, not done")
+        if not ref.artifacts:
+            raise ContextError(f"row {fresh_row.id} refs {stage.value} row {row_id}, which has no artifacts")
+        artifacts.extend(parse_row_artifacts(ref))
+    return artifacts
 
 
 def expected_types_of(rule: ConsistencyRule) -> list[tuple[type, ...] | None]:
