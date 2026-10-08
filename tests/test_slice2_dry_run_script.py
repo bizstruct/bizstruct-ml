@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from bizstruct_domain.schemas import Stage
 
 from bizstruct_ml.judge.base import ConsistencyJudge
 from bizstruct_ml.judge.fake import FakeJudgeModel
@@ -36,7 +37,7 @@ async def test_the_script_reports_groups_scenarios_tokens_and_retries(script, tm
     llm = scripted_llm(shape)
     inner = FakeLLM([llm._replies[0]])
     inner.last_usage = {"input": 10, "output": 5, "total": 15}
-    code = await script.main("an idea", "en", str(out), inner=inner, judge=ConsistencyJudge(FakeJudgeModel([NO_FINDINGS]), retry_wait=0), judge_label="fake")
+    code = await script.main("an idea", "en", str(out), inner=inner, judge=ConsistencyJudge(FakeJudgeModel([NO_FINDINGS]), retry_wait=0), judge_label="fake", through=Stage.CANVAS)
     assert code == 1 and report_status(out) == "awaiting_decision"  # the claim without a signal ends AWAITING_DECISION
     report = json.loads(out.read_text())
     assert report["judge"] == "fake" and len(report["scenarios"]) == 3
@@ -55,7 +56,26 @@ async def test_a_split_project_reports_two_groups(script, tmp_path):
     inner = FakeLLM([scripted_llm(SPLIT_IN_TWO)._replies[0]])
     inner.last_usage = {"input": 1, "output": 1, "total": 2}
     out = tmp_path / "run.json"
-    code = await script.main("x", "en", str(out), inner=inner, judge=ConsistencyJudge(FakeJudgeModel([NO_FINDINGS]), retry_wait=0), judge_label="fake")
+    code = await script.main("x", "en", str(out), inner=inner, judge=ConsistencyJudge(FakeJudgeModel([NO_FINDINGS]), retry_wait=0), judge_label="fake", through=Stage.CANVAS)
     report = json.loads(out.read_text())
     assert code == 0 and report["branch_decision"] == "split_model"
     assert [g["segments"] for g in report["groups"]] == [["S1", "S2"], ["S3"]] and len(report["canvases"]) == 2
+
+
+async def test_the_script_reports_the_cycle_scores_final_version_and_timing(script, tmp_path, capsys):
+    from tests.support.fakes import FakeLLM
+    from tests.support.projects import ONE
+
+    inner = FakeLLM([scripted_llm(ONE, scores=(100, 90, 95))._replies[0]])
+    inner.last_usage = {"input": 10, "output": 5, "total": 15}
+    out = tmp_path / "run.json"
+    code = await script.main("x", "en", str(out), inner=inner, judge=ConsistencyJudge(FakeJudgeModel([NO_FINDINGS]), retry_wait=0), judge_label="fake")
+    report = json.loads(out.read_text())
+    (cycle,) = report["cycles"]
+    assert code == 0 and cycle["iterations"] == 3 and cycle["scores"] == [100.0, 90.0, 95.0] and cycle["final_version"] == 2
+    assert len(cycle["moves"]) == 2 and cycle["moves"][0][0]["action"] == "raise"
+    row = report["rows"]["row_swot_errc_cycle_0"]
+    assert [d["label"] for d in row["calls_detail"]] == ["swot v1", "errc v1", "swot v2", "errc v2", "swot v3"]
+    assert row["seconds"] >= 0 and report["tokens_per_stage"]["swot_errc_cycle"]["calls"] == 5
+    printed = capsys.readouterr().out
+    assert "message lock renewal: 900 s" in printed and "final version 2" in printed

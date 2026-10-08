@@ -1,5 +1,6 @@
-"""Slice 2 dry run: brief -> empathy maps -> scenarios/ideations -> patterns -> one canvas per group,
-with the REAL generator client against the in-memory fake backend (standing in for be).
+"""Slice 2/3 dry run: brief -> empathy maps -> scenarios/ideations -> patterns -> one canvas per group
+-> (by default) one swot_errc_cycle row per canvas, with the REAL generator client against the
+in-memory fake backend (standing in for be). `--through canvas` stops after the canvases (slice 2).
 
 The judge is the real one if JUDGE_* are configured (settings or environment), otherwise a
 `FakeJudgeModel` that finds nothing; the first line of the output says which.
@@ -9,7 +10,8 @@ The judge is the real one if JUDGE_* are configured (settings or environment), o
 
 Prints per run: the groups and the branch decision, the relation types, the pattern tags and the
 pairwise scores, the interdependence_signal of EVERY scenario, the retries per row and what
-triggered them, the tokens per stage, and then the canvases. Makes real, billable API calls: run
+triggered them, the tokens per stage and per call, the wall-clock time per row against the lock
+renewal, and then the canvases and, for the cycle, the score series, the final version and the moves. Makes real, billable API calls: run
 by hand, never by CI. Langfuse is switched off.
 """
 
@@ -17,18 +19,20 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # slice1_dry_run (sets the dummy environment on import)
 
-from bizstruct_domain.schemas import GENERATION_CONTRACTS, CustomerScenario, Patterns, Stage, parse_artifact  # noqa: E402
+from bizstruct_domain.schemas import GENERATION_CONTRACTS, ArtifactType, CustomerScenario, Patterns, Stage, parse_artifact, select_final_version  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from slice1_dry_run import UsageLLM, build_judge  # noqa: E402
 
 from bizstruct_ml.core.stage_runner import RunOutcome, StageRunner  # noqa: E402
 from bizstruct_ml.llm.client import LLMClient  # noqa: E402
-from bizstruct_ml.stages import SLICE_2_GENERATORS  # noqa: E402
+from bizstruct_ml.config import settings as ml_settings  # noqa: E402
+from bizstruct_ml.stages import SLICE_3_GENERATORS  # noqa: E402
 from tests.support.fake_backend import FakeBackend  # noqa: E402
 
 STAGE_OF_CONTRACT = {c.__name__: stage for stage, contracts in GENERATION_CONTRACTS.items() for c in contracts}
@@ -43,6 +47,8 @@ class RowRecord:
     triggers: list[str] = field(default_factory=list)  # why each call after the first happened
     consistency_retries: int = 0
     failure: str | None = None
+    seconds: float = 0.0
+    calls_detail: list[dict] = field(default_factory=list)  # per call: label, seconds, tokens, error
 
 
 def trigger_of(messages: list[dict]) -> str | None:
@@ -53,6 +59,14 @@ def trigger_of(messages: list[dict]) -> str | None:
     if last.startswith("Your previous answer could not be used"):
         return "conversion/structure: " + last.split("reason:\n", 1)[-1].split("\nFix it", 1)[0].replace("\n", " ")[:300]
     return None
+
+
+def call_label(messages: list[dict], schema: type[BaseModel]) -> str:
+    import re
+
+    match = re.search(r"^Canvas version (\d+):", messages[1]["content"], re.M) if len(messages) > 1 else None
+    kind = {"SwotGenerated": "swot", "ErrcGenerated": "errc"}.get(schema.__name__)
+    return f"{kind} v{match.group(1)}" if kind and match else schema.__name__
 
 
 @dataclass
@@ -73,6 +87,8 @@ class TrackingLLM(UsageLLM):
             call = self.calls[before] if len(self.calls) > before else None
             if call is not None:
                 record.tokens += (call.usage or {}).get("total", 0)
+                record.calls_detail.append({"schema": schema.__name__, "label": call_label(messages, schema), "seconds": round(call.seconds, 1),
+                                            "usage": call.usage, "error": call.error})
                 if call.error:
                     record.triggers.append("llm error: " + call.error[:200])
 
@@ -85,9 +101,11 @@ class TrackingRunner(StageRunner):
 
     async def run(self, row, snapshot_closure, language) -> RunOutcome:
         self.tracker.current_row = row.id
+        started = time.monotonic()
         outcome = await super().run(row, snapshot_closure, language)
         self.outcomes[row.id] = outcome
         record = self.tracker.rows.setdefault(row.id, RowRecord(row.id, row.stage.value))
+        record.seconds = round(time.monotonic() - started, 1)
         record.consistency_retries = outcome.consistency_retries
         record.failure = outcome.failure.message if outcome.failure else None
         return outcome
@@ -112,6 +130,23 @@ def summarise(backend: FakeBackend, llm: TrackingLLM) -> dict:
         for key in ("input", "output", "total"):
             bucket[key] += (call.usage or {}).get(key, 0)
     summary: dict = {"scenarios": scenarios, "tokens_per_stage": tokens, "rows": {k: vars(v) for k, v in llm.rows.items()}}
+    cycles = []
+    for row in backend.rows_of(Stage.SWOT_ERRC_CYCLE):
+        swots = sorted((parse_artifact(a) for a in row.artifacts if a.type == ArtifactType.SWOT), key=lambda w: w.canvas_version)
+        errcs = sorted((parse_artifact(a) for a in row.artifacts if a.type == ArtifactType.ERRC), key=lambda e: e.from_version)
+        scores = [w.weighted_weakness_threat_score for w in swots]
+        cycles.append({
+            "row": row.id, "status": row.status.value, "iterations": len(swots), "scores": scores,
+            "final_version": select_final_version(scores) if scores else None,
+            "moves": [[{"action": m.action.value, "section": m.target_section.value, "target": m.target_card_text, "new": m.new_text,
+                        "rationale": m.rationale, "opposite_side_impact": m.opposite_side_impact} for m in e.moves] for e in errcs],
+            "swot_signals": [{"weaknesses": sum(a.score < 0 for c in w.clusters for a in c.axis_statements),
+                              "strengths": sum(a.score > 0 for c in w.clusters for a in c.axis_statements),
+                              "opportunities": sum(len(c.opportunities) for c in w.clusters),
+                              "threats_3_plus": sum(t.score >= 3 for c in w.clusters for t in c.threats)} for w in swots],
+        })
+    if cycles:
+        summary["cycles"] = cycles
     if isinstance(patterns, Patterns):
         index = {em_row.artifacts[0].id: i + 1 for i, em_row in enumerate(backend.rows_of(Stage.EMPATHY_MAP))}
         summary["branch_decision"] = patterns.branch_decision.value
@@ -124,13 +159,13 @@ def summarise(backend: FakeBackend, llm: TrackingLLM) -> dict:
     return summary
 
 
-async def main(idea: str, language: str, json_path: str | None, *, inner=None, judge=None, judge_label: str = "") -> int:
+async def main(idea: str, language: str, json_path: str | None, *, inner=None, judge=None, judge_label: str = "", through: Stage = Stage.SWOT_ERRC_CYCLE) -> int:
     """`inner`, `judge` and `judge_label` are for the offline smoke test; by default the real ones are built."""
     llm = TrackingLLM(inner or LLMClient())
     if judge is None:
         judge, judge_label = build_judge()
-    runner = TrackingRunner(SLICE_2_GENERATORS, llm=llm, judge=judge)
-    backend = FakeBackend(idea=idea, language=language, through=Stage.CANVAS)
+    runner = TrackingRunner(SLICE_3_GENERATORS, llm=llm, judge=judge)
+    backend = FakeBackend(idea=idea, language=language, through=through)
     print(f"generator: {llm.model_name}   judge: {judge_label}   language: {language}\nidea: {idea}\n")
     await backend.run_to_completion(runner)
     summary = summarise(backend, llm)
@@ -152,6 +187,21 @@ async def main(idea: str, language: str, json_path: str | None, *, inner=None, j
         extra = f"  retries: {record['triggers']}" if record["triggers"] else ""
         print(f"  {record['row_id']:<28} calls {record['calls']}  tokens {record['tokens']}  consistency retries {record['consistency_retries']}"
               + (f"  FAILED: {record['failure']}" if record["failure"] else "") + extra)
+    print(f"\n== wall-clock per row (message lock renewal: {ml_settings.lock_renewal_seconds} s)")
+    for record in summary["rows"].values():
+        print(f"  {record['row_id']:<28} {record['seconds']:>6.1f} s")
+    for cycle in summary.get("cycles", []):
+        print(f"\n== {cycle['row']} [{cycle['status']}]: {cycle['iterations']} iteration(s), scores {cycle['scores']}, final version {cycle['final_version']}")
+        for k, signals in enumerate(cycle["swot_signals"], start=1):
+            print(f"  swot v{k}: {signals}")
+        for k, moves in enumerate(cycle["moves"], start=1):
+            for m in moves:
+                what = f"{m['target']!r}" if m["target"] else f"new {m['new']!r}"
+                print(f"  errc v{k}: {m['action']:<9} {m['section']:<22} {what}  <- {m['rationale']}")
+        record = summary["rows"].get(cycle["row"], {})
+        for detail in record.get("calls_detail", []):
+            usage = detail["usage"] or {}
+            print(f"    call {detail['label']:<10} {detail['seconds']:>5.1f} s  in {usage.get('input', 0):>6}  out {usage.get('output', 0):>6}" + (f"  ERROR {detail['error']}" if detail["error"] else ""))
     print("\n== tokens per stage")
     for stage, bucket in summary["tokens_per_stage"].items():
         print(f"  {stage:<18} calls {bucket['calls']:>2}  in {bucket['input']:>6}  out {bucket['output']:>6}  total {bucket['total']:>6}")
