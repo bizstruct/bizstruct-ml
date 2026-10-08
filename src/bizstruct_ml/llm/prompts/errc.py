@@ -7,7 +7,8 @@ from bizstruct_ml.llm.prompts._canvas_view import render_canvas
 from bizstruct_ml.llm.prompts._shared import field_guide, language_rule
 from bizstruct_ml.llm.prompts.customer_scenario import brief_of
 
-PROMPT_VERSION = "1"
+# 1 = slice 3 (reduce/raise only marked a card); 2 = reduce/raise give the card's new text, field rule per action.
+PROMPT_VERSION = "2"
 
 SYSTEM = f"""\
 You propose the next step of a business model as ERRC moves (eliminate, reduce, raise, create) on the canvas you are shown, grounded in the SWOT \
@@ -21,12 +22,20 @@ The four actions:
 customer relationships, channels).
 - create: add an element the industry has never offered, driven by the opportunities.
 
+Field rule for each action (the schema cannot check it for you; a move that breaks it is rejected and you will be asked again):
+- eliminate: target_card_text only (no new_text).
+- reduce and raise: target_card_text AND new_text (the card's new full text).
+- create: new_text only (no target_card_text).
+
 Rules for the moves (1 to 6 in total, spread over the actions that the SWOT supports; you need not use all four):
 - eliminate, reduce and raise point at an EXISTING card: target_card_text must be the exact text of one card of the canvas in target_section, copied \
-character for character from inside the quotes (never the bracketed marker), and new_text stays empty. The card itself is kept as it is for reduce and \
-raise; only the move records the change.
+character for character from inside the quotes (never the bracketed marker).
+- reduce and raise change the card: new_text is the full text the card will have afterwards, and it must say concretely how the level changes (what \
+is cut down or lifted, and to what), not repeat the old wording with an adjective added. The card keeps its place; only its text changes.
+- A card that carries a marker ([raise], [reduce] or [create]) was changed by the previous step: do not move it again unless your new_text goes \
+further than the text it has now.
 - create has new_text, one short idea for a new card in target_section, and no target_card_text.
-- Never target the same card twice, and never target a card that an earlier move of yours eliminates.
+- Never target the same card twice, and never target a card that an earlier move of yours eliminates or rewrites.
 - opposite_side_impact: every move is checked against the opposite side of the canvas. The value side (value propositions, channels, customer \
 relationships, customer segments) and the cost side (key partnerships, key activities, key resources, cost structure, with the revenue streams \
 linking both) affect each other; say in one or two sentences what the move does on the other side.

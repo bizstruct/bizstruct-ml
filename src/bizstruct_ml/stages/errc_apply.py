@@ -3,8 +3,11 @@
 Semantics (read from the old what-if apply code in bizstruct-be, adapted to the domain's ErrcMove):
 - moves apply in order, to the cards of version k only; a move finds its card by the EXACT text of
   `target_card_text` inside `target_section`, the first match;
-- eliminate removes the card; reduce and raise keep the card (same id, same text) and set its
-  `errc_marker`; create appends a card made from `new_text` with marker create;
+- eliminate removes the card; reduce and raise keep the card's id, REPLACE its text with `new_text`
+  (domain 0.17.0: the card's new full text) and set its `errc_marker`; create appends a card made from
+  `new_text` with marker create;
+- later moves of the same step see the cards as the earlier ones left them: a card that an earlier
+  move eliminated, or whose text an earlier move replaced, is found only under its current text;
 - a move that finds no card (the text drifted, or an earlier move eliminated the card) aborts the
   step with a `ValueError` naming it; nothing is applied partially;
 - cards untouched by the step keep their ids and get `errc_marker = None`: the marker says what the
@@ -50,8 +53,8 @@ def apply_moves(canvas: Canvas, errc: Errc, new_canvas_id: str) -> Canvas:
             )
         if move.action == ERRCActionType.ELIMINATE:
             del cards[index]
-        else:  # reduce, raise: the card stays as it is, only its marker changes
-            cards[index] = cards[index].model_copy(update={"errc_marker": move.action})
+        else:  # reduce, raise: same card (same id), new full text, marker
+            cards[index] = cards[index].model_copy(update={"text": move.new_text, "errc_marker": move.action})
     return Canvas(
         id=new_canvas_id,
         group_id=canvas.group_id,

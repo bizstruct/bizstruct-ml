@@ -12,6 +12,8 @@ CH = CanvasSection.CHANNELS
 
 
 def move(action, target=None, new=None, section=CH):
+    if action in (ERRCActionType.REDUCE, ERRCActionType.RAISE) and new is None:
+        new = f"{target} (changed)"
     return ErrcMove(action=action, target_section=section, target_card_text=target, new_text=new, opposite_side_impact="i", rationale="r")
 
 
@@ -50,11 +52,37 @@ def test_new_cards_are_numbered_in_order_across_sections():
 
 
 @pytest.mark.parametrize("action", [ERRCActionType.REDUCE, ERRCActionType.RAISE])
-def test_reduce_and_raise_keep_the_card_and_only_set_the_marker(action):
-    before, after = apply(move(action, "Web shop"))
-    assert texts(after) == texts(before)
-    card, original = after.sections.channels[2], before.sections.channels[2]
-    assert (card.id, card.text, card.errc_marker) == (original.id, original.text, action)
+def test_reduce_and_raise_replace_the_text_keep_the_id_and_set_the_marker(action):
+    before, after = apply(move(action, "Web shop", new="Web shop with a 2-hour pick-up promise"))
+    original = before.sections.channels[2]
+    card = after.sections.channels[2]
+    assert (card.id, card.text, card.errc_marker) == (original.id, "Web shop with a 2-hour pick-up promise", action)
+    assert texts(after) == ["Direct sales", "Partner shops", "Web shop with a 2-hour pick-up promise"]  # same place
+
+
+def test_all_four_actions_in_one_step():
+    before, after = apply(
+        move(ERRCActionType.ELIMINATE, "Direct sales"),
+        move(ERRCActionType.REDUCE, "Partner shops", new="Two partner shops only"),
+        move(ERRCActionType.RAISE, "Web shop", new="Web shop open around the clock"),
+        move(ERRCActionType.CREATE, new="Pop-up stands"),
+    )
+    assert texts(after) == ["Two partner shops only", "Web shop open around the clock", "Pop-up stands"]
+    assert [c.errc_marker for c in after.sections.channels] == [ERRCActionType.REDUCE, ERRCActionType.RAISE, ERRCActionType.CREATE]
+    assert [c.id for c in after.sections.channels[:2]] == [before.sections.channels[1].id, before.sections.channels[2].id]
+
+
+def test_the_replaced_text_is_what_the_next_version_matches_on():
+    before, v2 = apply(move(ERRCActionType.RAISE, "Web shop", new="Web shop, faster"))
+    v3 = apply_moves(v2, errc_model("row", 2, v2.id, "swot_2", [move(ERRCActionType.RAISE, "Web shop, faster", new="Web shop, fastest")]), "canvas_v3")
+    assert texts(v3)[2] == "Web shop, fastest" and v3.sections.channels[2].id == before.sections.channels[2].id
+    with pytest.raises(ValueError, match="Move 1"):
+        apply_moves(v2, errc_model("row", 2, v2.id, "swot_2", [move(ERRCActionType.RAISE, "Web shop", new="x")]), "canvas_v3")  # the old text is gone
+
+
+def test_a_later_move_of_the_same_step_cannot_find_the_old_text_of_a_rewritten_card():
+    with pytest.raises(ValueError, match=r"Move 2 \(raise\) targets the card 'Web shop'"):
+        apply(move(ERRCActionType.RAISE, "Web shop", new="Web shop 2"), move(ERRCActionType.RAISE, "Web shop", new="Web shop 3"))
 
 
 def test_cards_untouched_by_the_step_have_no_marker_even_if_an_earlier_step_marked_them():
