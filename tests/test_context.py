@@ -246,3 +246,12 @@ def test_a_directly_referenced_row_missing_from_the_snapshot_is_an_error():
     del rows["row_em_1"]
     with pytest.raises(ContextError, match="row_em_1.*not in the snapshot"):
         gather_inputs([MANY_EM], fresh_row=canvases[0], fresh_artifacts=[], rows=rows)
+
+
+def test_on_regeneration_the_done_fresh_rows_stale_artifacts_do_not_count_on_the_closure_path():
+    # the fresh row is DONE with an old empathy map (a regeneration); only the new one may be seen
+    stale = done_empathy_row("row_em_0", "Stale")
+    fresh = stale.model_copy(update={"refs": {Stage.BRIEF: ["row_brief"]}})
+    rows = rows_by_id([brief_row(), fresh])
+    (found,) = gather_inputs([MANY_EM], fresh_row=fresh, fresh_artifacts=[empathy_model("row_em_0", "New")], rows=rows)
+    assert personas(found) == ["New"]
