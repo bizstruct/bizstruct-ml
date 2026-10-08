@@ -5,6 +5,9 @@ from bizstruct_domain.schemas import MAX_SEGMENTS, Brief
 from bizstruct_ml.core.stage_runner import StageContext
 from bizstruct_ml.llm.prompts._shared import field_guide, language_rule
 
+# 1 = the text merged in PR #5.
+PROMPT_VERSION = "1"
+
 SYSTEM = f"""\
 You normalise a startup idea into a Brief. The Brief is an extractor and classifier of what the user wrote, \
 not a creative step: do not invent facts, only organise what the description says and name what it lacks.

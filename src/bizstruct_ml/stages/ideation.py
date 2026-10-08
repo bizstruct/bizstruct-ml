@@ -9,6 +9,7 @@ from bizstruct_ml.llm.prompts import ideation as prompt
 
 
 class IdeationGenerator(StageGenerator):
+    prompt_version: ClassVar[str] = prompt.PROMPT_VERSION
     stage: ClassVar[Stage] = Stage.IDEATION
 
     def build_messages(self, ctx: StageContext) -> list[dict]:

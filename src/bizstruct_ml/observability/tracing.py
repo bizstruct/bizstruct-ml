@@ -115,8 +115,12 @@ def trace_block_generation(
     attempt_number: int,
     domain_version: str,
     language: str,
+    prompt_version: str | None = None,
 ) -> Iterator[Any]:
     """Root span for processing one queue message end to end.
+
+    `prompt_version` is the version constant of the stage prompt that produced
+    the result, so a trace can be tied to the prompt text behind it.
 
     Yields the root observation (or NOOP) so callers can attach a final
     outcome/retry-count via `.update(...)` once processing finishes. Every
@@ -140,7 +144,7 @@ def trace_block_generation(
 
             prop_factory = lambda: propagate_attributes(  # noqa: E731
                 session_id=project_id,
-                tags=[block, mode, f"language:{language}"],
+                tags=[block, mode, f"language:{language}", *([f"prompt:{prompt_version}"] if prompt_version else [])],
                 trace_name="generate_block",
                 metadata={
                     "project_id": project_id,
@@ -148,6 +152,7 @@ def trace_block_generation(
                     "attempt_number": attempt_number,
                     "bizstruct_domain_version": domain_version,
                     "language": language,
+                    **({"prompt_version": prompt_version} if prompt_version else {}),
                 },
             )
         except Exception:

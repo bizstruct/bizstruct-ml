@@ -79,12 +79,17 @@ class StageContext(BaseModel):
     artifacts: dict[Stage, list[BaseModel]]
     # Artifacts of every row reachable through refs (transitively), labelled by stage.
     closure: dict[Stage, list[BaseModel]] = {}
+    # The rows of the snapshot closure by id (for row facts such as `instance_index`).
+    rows: dict[str, StageRow] = {}
 
 
 class StageGenerator(ABC):
     """Stage-specific half of generation. One subclass per stage."""
 
     stage: ClassVar[Stage]
+    # Version of the stage prompt text; bump it whenever the prompt changes. It goes
+    # into the trace metadata so a result can be tied to the prompt that made it.
+    prompt_version: ClassVar[str] = "unversioned"
 
     @abstractmethod
     def build_messages(self, ctx: StageContext) -> list[dict]:
@@ -154,6 +159,9 @@ class StageRunner:
     def has_generator(self, stage: Stage) -> bool:
         return stage in self._generators
 
+    def prompt_version(self, stage: Stage) -> str:
+        return self._generators[stage].prompt_version
+
     async def run(self, row: StageRow, snapshot_closure: ProjectSnapshot, language: str) -> RunOutcome:
         generator = self._generators[row.stage]
         rows = rows_by_id(snapshot_closure.rows)
@@ -165,6 +173,7 @@ class StageRunner:
                 row=row,
                 artifacts=gather_context(row, rows),
                 closure=gather_closure(row, rows),
+                rows=rows,
             )
         except ContextError as e:
             return self._failed(f"context: {e}")
@@ -219,7 +228,11 @@ class StageRunner:
                 "llm_call",
                 model=self._llm.model_name,
                 input=messages,
-                metadata={"attempt": attempts["n"], "consistency_round": consistency_round},
+                metadata={
+                    "attempt": attempts["n"],
+                    "consistency_round": consistency_round,
+                    "prompt_version": generator.prompt_version,
+                },
             ) as span:
                 generated = await self._llm.generate_structured(messages, contract)
                 span.update(output=generated.model_dump(mode="json"), usage_details=self._llm.last_usage)

@@ -115,6 +115,7 @@ async def handle_message(
         attempt_number=delivery_count,
         domain_version=bizstruct_domain.__version__,
         language=snapshot.language,
+        prompt_version=runner.prompt_version(target.stage),
     ) as root_span:
         try:
             disposition = await _generate_and_send(message, snapshot, row, backend, runner, bound_log)

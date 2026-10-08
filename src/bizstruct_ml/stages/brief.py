@@ -8,6 +8,7 @@ from bizstruct_ml.llm.prompts import brief as prompt
 
 
 class BriefGenerator(StageGenerator):
+    prompt_version: ClassVar[str] = prompt.PROMPT_VERSION
     stage: ClassVar[Stage] = Stage.BRIEF
 
     def build_messages(self, ctx: StageContext) -> list[dict]:
