@@ -449,9 +449,30 @@ class FakeLangfuse:
         return httpx.MockTransport(self.handler)
 
 
+LEDGER = """# Ledger
+
+| stage | prompt version | idea | calls | input | output | total | date |
+|---|---|---|---|---|---|---|---|
+| pitch | 1 | farm (EN) | 1 | 2,493 | 711 | 3,204 | d |
+| pitch | 1 | photo (EN) | 1 | 2,670 | 839 | 3,509 | d |
+| pitch | 1 | split (EN) | 1 | 2,644 | 830 | 3,474 | d |
+
+| idea | rows | LLM calls | total tokens | cycle |
+|---|---|---|---|---|
+| farm (EN) | 10 | 12 | 40,759 | x |
+| split (EN) | 13 | 17 | 63,523 | x |
+
+| idea | description | iterations | score series | final version | calls | input | output | total | wall-clock |
+|---|---|---|---|---|---|---|---|---|---|
+| farm | single segment | 5 | [1] | 4 | 9 | 26,687 | 12,895 | 39,582 | 129 s |
+"""
+
+
 async def langfuse_run(smoke, tmp_path, lf: FakeLangfuse | None, environ: dict, project: dict, **kwargs):
     be = FakeBe([(200, project)])
-    extra = {"langfuse": True, "langfuse_kwargs": {"environ": environ, "transport": lf.transport() if lf else None, "wait": 30, **kwargs}}
+    ledger = tmp_path / "ledger.md"
+    ledger.write_text(LEDGER)
+    extra = {"langfuse": True, "langfuse_kwargs": {"environ": environ, "transport": lf.transport() if lf else None, "wait": 30, "ledger_path": ledger, **kwargs}}
     outcome, lines, clock = await run(smoke, be, tmp_path, **extra)
     report_lines: list[str] = []
     smoke.report(outcome, report_lines.append)  # what the script prints
@@ -471,7 +492,7 @@ async def test_langfuse_prints_tokens_per_stage_and_in_total_next_to_the_ledger(
     assert " 2 " in pitch_line and "200" in pitch_line and "40" in pitch_line and "240" in pitch_line and "3,474 - 3,509" not in pitch_line  # ledger range of pitch: 3,204 - 3,509
     assert "3,204 - 3,509 (3 runs)" in pitch_line
     all_line = next(line for line in lines if line.strip().startswith("ALL"))
-    assert f"{rows * 240:,}" in all_line and "40,759 - 63,523 (3 runs)" in all_line
+    assert f"{rows * 240:,}" in all_line and "40,759 - 63,523 (2 runs)" in all_line
     assert "WARNING" not in report
 
 
@@ -523,8 +544,8 @@ async def test_every_page_is_read_and_the_older_usage_field_is_understood(smoke,
 
 
 def test_the_ledger_is_read_by_table_header(smoke):
-    ledger = smoke.load_ledger()
-    assert sorted(ledger["pitch"]) == [3204, 3474, 3509] and len(ledger["ALL"]) == 3 and len(ledger["swot_errc_cycle"]) >= 3
+    ledger = smoke.load_ledger()  # the real file: loose checks, it grows with every measurement
+    assert {3204, 3474, 3509} <= set(ledger["pitch"]) and len(ledger["ALL"]) >= 3 and len(ledger["swot_errc_cycle"]) >= 3
     assert "brief" in ledger and "canvas" in ledger
 
 
