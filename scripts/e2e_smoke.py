@@ -362,12 +362,26 @@ def langfuse_settings(environ: Any = os.environ) -> tuple[str, str, str] | None:
     return public, secret, (environ.get("LANGFUSE_HOST") or DEFAULT_LANGFUSE_HOST).rstrip("/")
 
 
-async def _pages(client: httpx.AsyncClient, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+LANGFUSE_RATE_LIMIT_RETRIES = 8
+
+
+async def _get(client: httpx.AsyncClient, path: str, params: dict[str, Any], sleep: Callable[[float], Awaitable[None]]) -> httpx.Response:
+    """GET that waits and tries again on 429 (Langfuse rate-limits its public API), honouring Retry-After."""
+    for attempt in range(1, LANGFUSE_RATE_LIMIT_RETRIES + 1):
+        response = await client.get(path, params=params)
+        if response.status_code != 429 or attempt == LANGFUSE_RATE_LIMIT_RETRIES:
+            return response
+        retry_after = response.headers.get("retry-after", "")
+        await sleep(min(float(retry_after), 60.0) if retry_after.replace(".", "", 1).isdigit() else min(2.0 * attempt, 30.0))
+    raise AssertionError("unreachable")
+
+
+async def _pages(client: httpx.AsyncClient, path: str, params: dict[str, Any], sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> list[dict[str, Any]]:
     """Every item of a paginated Langfuse list endpoint ({"data": [...], "meta": {"totalPages": n}})."""
     items: list[dict[str, Any]] = []
     page = 1
     while True:
-        response = await client.get(path, params={**params, "page": page, "limit": 100})
+        response = await _get(client, path, {**params, "page": page, "limit": 100}, sleep)
         if response.status_code != 200:
             raise SmokeError(f"Langfuse answered HTTP {response.status_code} for {path}")
         body = response.json()
@@ -402,7 +416,7 @@ async def fetch_langfuse_usage(
     async with httpx.AsyncClient(base_url=host, auth=auth, timeout=30.0, transport=transport) as client:
         waited = 0.0
         while True:
-            traces = await _pages(client, "/api/public/traces", {"sessionId": project_id})
+            traces = await _pages(client, "/api/public/traces", {"sessionId": project_id}, sleep)
             if len(traces) >= expected_traces or waited >= wait:
                 break
             await sleep(5.0)
@@ -414,7 +428,7 @@ async def fetch_langfuse_usage(
             stage = metadata.get("block") or next((t for t in trace.get("tags") or [] if t in {x.value for x in Stage}), "unknown")
             if metadata.get("row_id"):
                 rows.add(metadata["row_id"])
-            observations = await _pages(client, "/api/public/observations", {"traceId": trace["id"], "type": "GENERATION"})
+            observations = await _pages(client, "/api/public/observations", {"traceId": trace["id"], "type": "GENERATION"}, sleep)
             bucket = usage.per_stage.setdefault(stage, StageUsage())
             for observation in observations:
                 inp, out, total = _usage_of(observation)

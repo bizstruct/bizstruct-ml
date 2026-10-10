@@ -550,3 +550,30 @@ def test_a_generation_without_a_total_is_summed_from_input_and_output(smoke):
     assert smoke._usage_of({"usageDetails": {"input": 7, "output": 3}}) == (7, 3, 10)
     assert smoke._usage_of({"usageDetails": {"input": 7, "output": 3, "total": 12}}) == (7, 3, 12)
     assert smoke._usage_of({}) == (0, 0, 0)
+
+
+async def test_a_rate_limited_langfuse_is_waited_for_with_retry_after(smoke, tmp_path):
+    project = await finished(ONE)
+    lf = FakeLangfuse(project)
+    limited = {"left": 3}
+    inner = lf.handler
+
+    def handler(request):
+        if limited["left"] > 0:
+            limited["left"] -= 1
+            return httpx.Response(429, headers={"Retry-After": "7"})
+        return inner(request)
+
+    lf.transport = lambda: httpx.MockTransport(handler)  # type: ignore[method-assign]
+    clock = Clock()
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=clock.sleep)
+    assert outcome.ok and "WARNING" not in "\n".join(lines) and "failed" not in "\n".join(lines)
+    assert clock.now >= 21  # three waits of 7 s
+
+
+async def test_a_langfuse_that_stays_rate_limited_is_reported_as_429(smoke, tmp_path):
+    project = await finished(ONE)
+    lf = FakeLangfuse(project, status=429)
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=Clock().sleep)
+    assert outcome.ok and any("HTTP 429" in line for line in lines)
+    assert len(lf.requests) == smoke.LANGFUSE_RATE_LIMIT_RETRIES
