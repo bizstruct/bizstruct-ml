@@ -34,7 +34,12 @@ def main() -> None:
     except Exception as e:
         log.error("startup_refused", error=str(e), error_type=type(e).__name__)
         sys.exit(1)
-    asyncio.run(run_consumer(runner))
+    from bizstruct_ml.adapters.consumer import AUTH_FAILURE_EXIT_CODE, AuthRejectedError
+
+    try:
+        asyncio.run(run_consumer(runner))
+    except AuthRejectedError:
+        sys.exit(AUTH_FAILURE_EXIT_CODE)
 
 
 if __name__ == "__main__":

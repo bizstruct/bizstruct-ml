@@ -116,11 +116,14 @@ def trace_block_generation(
     domain_version: str,
     language: str,
     prompt_version: str | None = None,
+    row_id: str | None = None,
 ) -> Iterator[Any]:
     """Root span for processing one queue message end to end.
 
     `prompt_version` is the version constant of the stage prompt that produced
-    the result, so a trace can be tied to the prompt text behind it.
+    the result, so a trace can be tied to the prompt text behind it. `row_id` is the stage row the message
+    is for (the trace's session is the project, its `block` the stage): together they let token usage be
+    read back per project, stage and row from the Langfuse API.
 
     Yields the root observation (or NOOP) so callers can attach a final
     outcome/retry-count via `.update(...)` once processing finishes. Every
@@ -153,6 +156,7 @@ def trace_block_generation(
                     "bizstruct_domain_version": domain_version,
                     "language": language,
                     **({"prompt_version": prompt_version} if prompt_version else {}),
+                    **({"row_id": row_id} if row_id else {}),
                 },
             )
         except Exception:
