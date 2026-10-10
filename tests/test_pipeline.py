@@ -128,6 +128,18 @@ async def test_a_done_row_with_the_same_attempt_completes_without_work():
     assert llm.calls == [] and backend.results == []
 
 
+@pytest.mark.parametrize(
+    "status",
+    [StageStatus.AWAITING_DECISION, StageStatus.ERROR, StageStatus.PENDING, StageStatus.CONSISTENCY_CHECK],
+)
+async def test_a_row_that_is_not_running_completes_without_work_even_with_the_same_attempt(status):
+    backend = default_backend(status=status)
+    llm = FakeLLM([empathy_generated()])
+    disposition = await handle_message(message(), backend.client(), runner(llm))
+    assert disposition.action == Action.COMPLETE and disposition.reason == "NotRunning"
+    assert llm.calls == [] and backend.results == []
+
+
 async def test_a_done_row_with_a_different_attempt_is_stale_not_applied():
     backend = default_backend(status=StageStatus.DONE, attempt_id="att2")
     disposition = await handle_message(message(attempt_id="att1"), backend.client(), runner())
