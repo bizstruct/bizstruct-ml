@@ -117,7 +117,7 @@ class Clock:
         self.now += max(seconds, 0.001)
 
 
-async def run(smoke, be: FakeBe, tmp_path, *, timeout=60, enabled=(), clock: Clock | None = None):
+async def run(smoke, be: FakeBe, tmp_path, *, timeout=60, enabled=(), clock: Clock | None = None, **extra):
     clock = clock or Clock()
     lines: list[str] = []
     async with be.client() as client:
@@ -134,6 +134,7 @@ async def run(smoke, be: FakeBe, tmp_path, *, timeout=60, enabled=(), clock: Clo
             sleep=clock.sleep,
             clock=clock,
             log=lines.append,
+            **extra,
         )
     return outcome, lines, clock
 
@@ -402,3 +403,150 @@ def test_the_arguments_are_validated(smoke, monkeypatch):
 
     monkeypatch.setenv("SMOKE_PASSWORD", "from-env")
     assert smoke.parse_args(base).password == "from-env"
+
+
+# --------------------------------------------------------------------------- tokens through Langfuse
+
+LF_KEYS = {"LANGFUSE_PUBLIC_KEY": "pk-lf-PUBLIC123", "LANGFUSE_SECRET_KEY": "sk-lf-SECRET456", "LANGFUSE_HOST": "http://lf.test"}
+
+
+class FakeLangfuse:
+    """The Langfuse public API as a mock transport: traces of a session and their generation observations."""
+
+    def __init__(self, project: dict, *, per_call: tuple[int, int] = (100, 20), appear_after: int = 0, page_size: int = 100, status: int = 200,
+                 usage_key: str = "usageDetails") -> None:
+        self.traces = [
+            {"id": f"t-{r['id']}", "sessionId": project["id"], "metadata": {"block": r["stage"], "row_id": r["id"]}, "tags": [r["stage"]]}
+            for r in project["rows"]
+        ]
+        self.per_call, self.appear_after, self.page_size, self.status, self.usage_key = per_call, appear_after, page_size, status, usage_key
+        self.trace_requests = 0
+        self.requests: list[httpx.Request] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.status != 200:
+            return httpx.Response(self.status, text="no")
+        params = request.url.params
+        page, limit = int(params["page"]), min(int(params["limit"]), self.page_size)
+        if request.url.path == "/api/public/traces":
+            self.trace_requests += 1
+            assert params["sessionId"] == "p-1"
+            visible = self.traces if self.trace_requests > self.appear_after else self.traces[:1]
+            return httpx.Response(200, json=self._page(visible, page, limit))
+        assert request.url.path == "/api/public/observations" and params["type"] == "GENERATION"
+        inp, out = self.per_call
+        usage = {"input": inp, "output": out, "total": inp + out}
+        calls = [{"name": "llm_call", self.usage_key: usage}, {"name": "llm_call", self.usage_key: usage}]
+        return httpx.Response(200, json=self._page(calls, page, limit))
+
+    @staticmethod
+    def _page(items: list, page: int, limit: int) -> dict:
+        pages = max(1, -(-len(items) // limit))
+        return {"data": items[(page - 1) * limit : page * limit], "meta": {"page": page, "limit": limit, "totalItems": len(items), "totalPages": pages}}
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handler)
+
+
+async def langfuse_run(smoke, tmp_path, lf: FakeLangfuse | None, environ: dict, project: dict, **kwargs):
+    be = FakeBe([(200, project)])
+    extra = {"langfuse": True, "langfuse_kwargs": {"environ": environ, "transport": lf.transport() if lf else None, "wait": 30, **kwargs}}
+    outcome, lines, clock = await run(smoke, be, tmp_path, **extra)
+    report_lines: list[str] = []
+    smoke.report(outcome, report_lines.append)  # what the script prints
+    return outcome, report_lines, clock
+
+
+async def test_langfuse_prints_tokens_per_stage_and_in_total_next_to_the_ledger(smoke, tmp_path):
+    project = await finished(ONE)
+    lf = FakeLangfuse(project)
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=Clock().sleep)
+    assert outcome.ok
+    report = "\n".join(lines)
+    rows = len(project["rows"])
+    assert f"{rows} traces, {rows} of {rows} rows traced" in report
+    # two calls of 100 in / 20 out per trace; one trace per row, one row per stage in this shape
+    pitch_line = next(line for line in lines if line.strip().startswith("pitch"))
+    assert " 2 " in pitch_line and "200" in pitch_line and "40" in pitch_line and "240" in pitch_line and "3,474 - 3,509" not in pitch_line  # ledger range of pitch: 3,204 - 3,509
+    assert "3,204 - 3,509 (3 runs)" in pitch_line
+    all_line = next(line for line in lines if line.strip().startswith("ALL"))
+    assert f"{rows * 240:,}" in all_line and "40,759 - 63,523 (3 runs)" in all_line
+    assert "WARNING" not in report
+
+
+async def test_the_langfuse_keys_are_never_printed_or_dumped(smoke, tmp_path):
+    project = await finished(ONE)
+    lf = FakeLangfuse(project)
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=Clock().sleep)
+    printed = "\n".join(lines) + "\n".join(outcome.usage_lines) + outcome.dump_path.read_text()
+    assert "PUBLIC123" not in printed and "SECRET456" not in printed
+    assert all(request.headers["authorization"].startswith("Basic ") for request in lf.requests)
+
+
+async def test_without_the_keys_it_says_so_and_the_verdict_is_unaffected(smoke, tmp_path):
+    project = await finished(ONE)
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, None, {"LANGFUSE_PUBLIC_KEY": "pk-only"}, project)
+    assert outcome.ok and any("Langfuse is not configured" in line for line in lines)
+
+
+async def test_traces_that_appear_late_are_waited_for(smoke, tmp_path):
+    project = await finished(ONE)
+    lf = FakeLangfuse(project, appear_after=3)
+    clock = Clock()
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=clock.sleep)
+    rows = len(project["rows"])
+    assert lf.trace_requests == 4 and f"{rows} traces" in "\n".join(lines) and "WARNING" not in "\n".join(lines)
+
+
+async def test_traces_that_never_appear_give_a_warning_not_a_failure(smoke, tmp_path):
+    project = await finished(ONE)
+    lf = FakeLangfuse(project, appear_after=10_000)
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=Clock().sleep, wait=10)
+    assert outcome.ok and any(line.strip().startswith("WARNING: only 1 of") for line in lines)
+
+
+async def test_a_langfuse_error_is_reported_and_does_not_fail_the_smoke(smoke, tmp_path):
+    project = await finished(ONE)
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, FakeLangfuse(project, status=401), LF_KEYS, project, sleep=Clock().sleep)
+    assert outcome.ok and any("Langfuse token report failed" in line and "HTTP 401" in line for line in lines)
+    assert "SECRET456" not in "\n".join(lines)
+
+
+async def test_every_page_is_read_and_the_older_usage_field_is_understood(smoke, tmp_path):
+    project = await finished(SPLIT_IN_TWO)
+    lf = FakeLangfuse(project, page_size=2, usage_key="usage")
+    outcome, lines, _ = await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=Clock().sleep)
+    rows = len(project["rows"])
+    assert rows > 2 and f"{rows} traces, {rows} of {rows} rows traced" in "\n".join(lines)
+    assert f"{rows * 240:,}" in next(line for line in lines if line.strip().startswith("ALL"))
+
+
+def test_the_ledger_is_read_by_table_header(smoke):
+    ledger = smoke.load_ledger()
+    assert sorted(ledger["pitch"]) == [3204, 3474, 3509] and len(ledger["ALL"]) == 3 and len(ledger["swot_errc_cycle"]) >= 3
+    assert "brief" in ledger and "canvas" in ledger
+
+
+def test_the_langfuse_flag_is_opt_in(smoke):
+    base = ["--base-url", "http://x", "--email", "a@b.c", "--password", "p", "--idea", IDEA]
+    assert smoke.parse_args(base).langfuse is False
+    assert smoke.parse_args([*base, "--langfuse"]).langfuse is True
+
+
+async def test_the_host_and_the_basic_auth_come_from_the_environment(smoke, tmp_path):
+    import base64
+
+    project = await finished(ONE)
+    lf = FakeLangfuse(project)
+    await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=Clock().sleep)
+    assert {request.url.host for request in lf.requests} == {"lf.test"}
+    sent = base64.b64decode(lf.requests[0].headers["authorization"].split()[1]).decode()
+    assert sent == "pk-lf-PUBLIC123:sk-lf-SECRET456"
+    assert smoke.langfuse_settings({"LANGFUSE_PUBLIC_KEY": "a", "LANGFUSE_SECRET_KEY": "b"})[2] == smoke.DEFAULT_LANGFUSE_HOST
+
+
+def test_a_generation_without_a_total_is_summed_from_input_and_output(smoke):
+    assert smoke._usage_of({"usageDetails": {"input": 7, "output": 3}}) == (7, 3, 10)
+    assert smoke._usage_of({"usageDetails": {"input": 7, "output": 3, "total": 12}}) == (7, 3, 12)
+    assert smoke._usage_of({}) == (0, 0, 0)

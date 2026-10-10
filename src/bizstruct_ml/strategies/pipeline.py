@@ -130,6 +130,7 @@ async def handle_message(
         domain_version=bizstruct_domain.__version__,
         language=snapshot.language,
         prompt_version=runner.prompt_version(target.stage),
+        row_id=target.stage_row_id,
     ) as root_span:
         try:
             disposition = await _generate_and_send(message, snapshot, row, backend, runner, bound_log)
