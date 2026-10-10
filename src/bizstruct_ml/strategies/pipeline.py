@@ -23,6 +23,7 @@ from bizstruct_domain.schemas import (
 from pydantic import BaseModel
 
 from bizstruct_ml.adapters.backend_client import (
+    BackendAuthError,
     BackendClient,
     BackendRejectedError,
     BackendUnavailableError,
@@ -45,6 +46,19 @@ log = structlog.get_logger()
 # Stage generators the pipeline can run. A stage absent here is dead-lettered
 # with a clear reason; slices add their stages by registering them here.
 STAGE_GENERATORS: dict[Stage, StageGenerator] = {**SLICE_4_GENERATORS}
+
+
+AUTH_REJECTED = "BackendAuthRejected"  # Disposition.reason of a message abandoned because be answered 401/403
+
+
+def _auth_rejected(bound_log, e: BackendAuthError) -> "Disposition":
+    """The one error logged per message for a wrong key (the consumer counts these and ends the worker)."""
+    bound_log.error(
+        "backend_auth_rejected",
+        status_code=e.status_code,
+        likely_cause="the worker's BACKEND_API_KEY does not match be's INTERNAL_API_KEY",
+    )
+    return _abandon(AUTH_REJECTED, str(e))
 
 
 class Action(StrEnum):
@@ -131,6 +145,8 @@ async def _load(message: QueueMessage, backend: BackendClient, bound_log) -> tup
     target = message.targets[0]
     try:
         snapshot = await backend.get_snapshot(message.project_id, target.stage_row_id)
+    except BackendAuthError as e:
+        return _auth_rejected(bound_log, e)
     except ProjectNotFoundError as e:
         bound_log.error("message_dead_lettered", reason="project_not_found")
         return _dead_letter("ProjectNotFound", str(e))
@@ -202,6 +218,9 @@ async def _generate_and_send(
     with tracing.span("send_result") as span:
         try:
             await backend.send_result(result)
+        except BackendAuthError as e:
+            span.update(output={"outcome": "abandon", "reason": "auth_rejected"})
+            return _auth_rejected(bound_log, e)
         except HookStaleError as e:
             span.update(output={"outcome": "complete", "reason": "stale"})
             bound_log.info("result_stale", error=str(e))

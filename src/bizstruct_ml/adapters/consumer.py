@@ -12,11 +12,18 @@ from pydantic import ValidationError
 from bizstruct_ml.adapters.backend_client import BackendClient
 from bizstruct_ml.config import settings
 from bizstruct_ml.core.stage_runner import StageRunner
-from bizstruct_ml.strategies.pipeline import Action, Disposition, handle_message
+from bizstruct_ml.strategies.pipeline import AUTH_REJECTED, Action, Disposition, handle_message
 
 log = structlog.get_logger()
 
 _shutdown = asyncio.Event()
+
+MAX_CONSECUTIVE_AUTH_REJECTIONS = 3
+AUTH_FAILURE_EXIT_CODE = 3
+
+
+class AuthRejectedError(Exception):
+    """be rejected the worker's API key on several messages in a row; the worker must stop."""
 
 
 def _request_shutdown(*_: object) -> None:
@@ -74,11 +81,18 @@ async def run_consumer(
         ) as receiver:
             async with make_renewer(lock_seconds) as renewer:
                 log.info("consumer_ready")
+                rejections = 0
                 while not _shutdown.is_set():
                     messages = await receiver.receive_messages(max_message_count=1, max_wait_time=5)
                     for msg in messages:
                         renewer.register(receiver, msg, max_lock_renewal_duration=lock_seconds)
-                        await process_message(receiver, msg, backend, runner)
+                        disposition = await process_message(receiver, msg, backend, runner)
+                        rejections = rejections + 1 if disposition.reason == AUTH_REJECTED else 0
+                        if rejections >= MAX_CONSECUTIVE_AUTH_REJECTIONS:
+                            # Settled (abandoned) first, so the messages go back to the queue untouched.
+                            log.critical("worker_exiting", reason="backend_auth_rejected", consecutive=rejections)
+                            await backend.aclose()
+                            raise AuthRejectedError(f"{rejections} consecutive 401/403 answers from be")
 
     await backend.aclose()
     log.info("consumer_stopped")

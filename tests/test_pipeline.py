@@ -17,7 +17,7 @@ from bizstruct_ml.core.stage_runner import StageRunner
 from bizstruct_ml.judge.base import ConsistencyJudge
 from bizstruct_ml.judge.fake import FakeJudgeModel
 from bizstruct_ml.llm.client import LLMError
-from bizstruct_ml.strategies.pipeline import Action, build_runner, handle_message
+from bizstruct_ml.strategies.pipeline import AUTH_REJECTED, Action, build_runner, handle_message
 from tests.support.fakes import EmpathyMapTestGenerator, FakeLLM, brief_row, empathy_generated, empathy_row, snapshot_for
 
 
@@ -163,7 +163,7 @@ async def test_a_stage_mismatch_between_message_and_row_is_dead_lettered():
     ("get_status", "action", "reason"),
     [
         (404, Action.DEAD_LETTER, "ProjectNotFound"),
-        (403, Action.DEAD_LETTER, "SnapshotRejected_403"),
+        (400, Action.DEAD_LETTER, "SnapshotRejected_400"),
         (500, Action.ABANDON, "BackendUnavailable"),
     ],
 )
@@ -188,6 +188,26 @@ async def test_hook_response_codes(post_status, action, reason):
     backend.post_status = post_status
     disposition = await handle_message(message(), backend.client(), runner())
     assert (disposition.action, disposition.reason) == (action, reason)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("where", ["snapshot", "hook"])
+async def test_a_wrong_key_abandons_the_message_and_logs_one_error_naming_the_keys(status, where):
+    from structlog.testing import capture_logs
+
+    backend = default_backend()
+    if where == "snapshot":
+        backend.get_status = status
+    else:
+        backend.post_status = status
+    with capture_logs() as logs:
+        disposition = await handle_message(message(), backend.client(), runner())
+    assert (disposition.action, disposition.reason) == (Action.ABANDON, AUTH_REJECTED)
+    errors = [entry for entry in logs if entry["log_level"] == "error"]
+    assert len(errors) == 1 and errors[0]["status_code"] == status
+    assert "BACKEND_API_KEY" in errors[0]["likely_cause"] and "INTERNAL_API_KEY" in errors[0]["likely_cause"]
+    if where == "hook":
+        assert len(backend.results) == 1  # not retried
 
 
 def test_the_worker_starts_and_rejects_stages_that_have_no_generator_yet():

@@ -171,3 +171,55 @@ async def test_lock_renewal_duration_comes_from_the_env_at_both_places(monkeypat
 async def test_lock_renewal_defaults_to_900_seconds(monkeypatch):
     created_with, registered_with = await run_with_lock_setting(monkeypatch, None)
     assert created_with == [900] and registered_with == [900]
+
+
+async def run_dispositions(monkeypatch, reasons: list[str]):
+    """Run the consumer over one message per reason; return (receiver, error raised or None)."""
+    replies = iter(reasons)
+
+    async def fake_handle(message, backend, runner, *, delivery_count=1):
+        reason = next(replies)
+        action = Action.ABANDON if reason == consumer.AUTH_REJECTED else Action.COMPLETE
+        return Disposition(action=action, reason=reason)
+
+    monkeypatch.setattr(consumer, "handle_message", fake_handle)
+    receiver = FakeReceiver([[FakeMessage(body())] for _ in reasons])
+    try:
+        await asyncio.wait_for(
+            consumer.run_consumer(
+                runner=None,  # type: ignore[arg-type]
+                backend=FakeBackend(),  # type: ignore[arg-type]
+                client_factory=lambda: FakeClient(receiver),
+                renewer_factory=FakeRenewer,
+            ),
+            timeout=5,
+        )
+    except consumer.AuthRejectedError as e:
+        return receiver, e
+    return receiver, None
+
+
+async def test_three_consecutive_auth_rejections_end_the_worker_after_abandoning_them(monkeypatch):
+    receiver, error = await run_dispositions(monkeypatch, [consumer.AUTH_REJECTED] * 3 + ["ResultApplied"])
+    assert error is not None
+    assert [kind for kind, _ in receiver.settled] == ["abandon"] * 3  # settled, then stopped before the fourth
+
+
+async def test_an_other_message_in_between_resets_the_count(monkeypatch):
+    reasons = [consumer.AUTH_REJECTED, consumer.AUTH_REJECTED, "ResultApplied", consumer.AUTH_REJECTED, consumer.AUTH_REJECTED]
+    receiver, error = await run_dispositions(monkeypatch, reasons)
+    assert error is None and len(receiver.settled) == 5
+
+
+def test_main_exits_non_zero_when_the_worker_ends_on_auth_rejections(monkeypatch):
+    import bizstruct_ml.__main__ as entry
+
+    async def failing(runner):
+        raise consumer.AuthRejectedError("3 in a row")
+
+    monkeypatch.setattr(entry, "_configure_logging", lambda: None)
+    monkeypatch.setattr("bizstruct_ml.strategies.pipeline.build_runner", lambda settings: object())
+    monkeypatch.setattr(consumer, "run_consumer", failing)
+    with pytest.raises(SystemExit) as info:
+        entry.main()
+    assert info.value.code == consumer.AUTH_FAILURE_EXIT_CODE != 0
