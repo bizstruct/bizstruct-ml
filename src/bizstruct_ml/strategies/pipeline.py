@@ -154,6 +154,12 @@ async def _load(message: QueueMessage, backend: BackendClient, bound_log) -> tup
     if row.status == StageStatus.DONE:
         bound_log.info("already_applied")
         return _complete("AlreadyApplied")
+    if row.status != StageStatus.RUNNING:
+        # be applies a result only to a RUNNING row of this attempt, so generating for
+        # any other status (error after a stuck timeout, a result already applied and
+        # now awaiting a decision, reset to pending) is guaranteed wasted work.
+        bound_log.info("row_not_running", status=row.status.value)
+        return _complete("NotRunning")
     return snapshot, row
 
 
