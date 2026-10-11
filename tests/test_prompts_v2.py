@@ -198,5 +198,13 @@ def test_trace_metadata_and_tags_carry_the_prompt_version(monkeypatch):
     ):
         pass
     assert "prompt_version" not in seen["metadata"] and not any(t.startswith("prompt:") for t in seen["tags"])
+    assert "row_id" not in seen["metadata"]
+
+    seen.clear()
+    with tracing.trace_block_generation(
+        project_id="p", block="b", mode="pipeline", attempt_number=1, domain_version="0.15.0", language="en", row_id="row_b_0",
+    ):
+        pass
+    assert seen["metadata"]["row_id"] == "row_b_0" and seen["session_id"] == "p" and seen["metadata"]["block"] == "b"
     tracing._client = None
     tracing._client_init_attempted = False

@@ -6,10 +6,12 @@ turn it into a queue disposition without looking at status codes:
 
 | call | response | raises |
 |---|---|---|
+| GET  | 401, 403 | `BackendAuthError` -> abandon, and the worker exits after repeated ones |
 | GET  | 404 | `ProjectNotFoundError` -> dead-letter |
 | GET  | other 4xx | `BackendRejectedError` -> dead-letter |
 | GET  | 5xx / timeout / network | `BackendUnavailableError` -> abandon |
 | POST | 2xx | (returns) -> complete |
+| POST | 401, 403 | `BackendAuthError` -> abandon, and the worker exits after repeated ones |
 | POST | 409 stale attempt | `HookStaleError` -> complete |
 | POST | 404, 422, other 4xx | `HookRejectedError` -> dead-letter |
 | POST | 5xx / timeout / network | `HookUnavailableError` (retried first) -> abandon |
@@ -23,6 +25,7 @@ from bizstruct_ml.llm.retry import retry_async
 
 HOOK_PATH = "/api/internal/hook"
 HOOK_ATTEMPTS = 3
+AUTH_STATUS_CODES = (401, 403)
 
 
 class ProjectNotFoundError(Exception):
@@ -31,6 +34,15 @@ class ProjectNotFoundError(Exception):
 
 class BackendUnavailableError(Exception):
     pass
+
+
+class BackendAuthError(Exception):
+    """be answered 401 or 403 (to the snapshot read or to the hook): the API key is wrong. Not the
+    message's fault and not worth retrying with the same key, so the message is not dead-lettered."""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class BackendRejectedError(Exception):
@@ -93,6 +105,8 @@ class BackendClient:
         except httpx.RequestError as e:
             raise BackendUnavailableError(f"Request error fetching project {project_id}") from e
 
+        if response.status_code in AUTH_STATUS_CODES:
+            raise BackendAuthError(response.status_code, f"Backend answered {response.status_code} to the snapshot read of {project_id}")
         if response.status_code == 404:
             raise ProjectNotFoundError(f"Project {project_id} or row {row_id} not found")
         if response.status_code >= 500:
@@ -132,6 +146,8 @@ class BackendClient:
             return
         if response.status_code >= 500:
             raise HookUnavailableError(f"Hook returned {response.status_code} for {label}")
+        if response.status_code in AUTH_STATUS_CODES:
+            raise BackendAuthError(response.status_code, f"Backend answered {response.status_code} to the hook for {label}")
         if response.status_code == 409:
             raise HookStaleError(f"Hook returned 409 for {label}: {response.text}")
         raise HookRejectedError(

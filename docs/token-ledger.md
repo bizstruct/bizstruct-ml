@@ -171,6 +171,26 @@ Whole run (all stages, the earlier ones included):
 
 The three new stages cost about 10.4k (farm), 11.8k (photo) and 11.7k (split) tokens, 18 to 25 % of a run; the cycle is still the largest single row (15.0k, 15.8k, 26.3k). The longest row is the cycle (54 s, 60 s, 94 s against a lock renewal of 900 s); storytelling, future_scenario and pitch take 6 to 12 s each. These are one run per idea, not an average: the earlier stages are generated again in every run, so the totals differ between runs of the same idea.
 
+## Through the whole stack: Langfuse token report of the live smoke (2026-10-10, `scripts/e2e_smoke.py --langfuse`)
+
+One run of the three-segment idea (`music`, EN) through be and two ml workers on one queue (fake judge, prompt versions as above), read back from the Langfuse public API (16 traces for 16 rows, session = project id, one trace per queue message):
+
+| stage | calls | input | output | total |
+|---|---|---|---|---|
+| brief | 1 | 629 | 240 | 869 |
+| empathy_map | 3 | 3,541 | 2,983 | 6,524 |
+| customer_scenario | 3 | 7,064 | 1,241 | 8,305 |
+| ideation | 3 | 6,884 | 1,326 | 8,210 |
+| patterns | 1 | 5,016 | 458 | 5,474 |
+| canvas | 1 | 6,278 | 742 | 7,020 |
+| swot_errc_cycle | 3 | 9,679 | 5,750 | 15,429 |
+| storytelling | 1 | 3,691 | 753 | 4,444 |
+| future_scenario | 1 | 3,294 | 1,105 | 4,399 |
+| pitch | 1 | 2,642 | 907 | 3,549 |
+| **all** | 18 | 48,718 | 15,505 | **64,223** |
+
+This is a single run of a different idea from the slice 4 runs, so it is a plausibility check against the tables above, not a repeat of them: stage totals fall inside or just above the recorded ranges (the cycle ran 2 iterations, so below the slice 3 table). Judge tokens are not counted (fake judge).
+
 ## Reported earlier: slice 1 run totals (no per-stage split was recorded)
 
 From the reports of PR #6 and PR #7 (slice 1 stages only: `brief`, `empathy_map`, `customer_scenario`, `ideation`). Ideas as described there; the exact texts were not kept in the repository.

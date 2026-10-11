@@ -281,3 +281,4 @@ async def test_trace_metadata_uses_the_snapshot_language_not_the_message_languag
     message = backend.message_for("row_brief_0").model_copy(update={"language": "en"})
     await handle_message(message, backend.client(), runner(FakeLLM([brief_with(["Міські батьки"])])))
     assert [k["language"] for k in seen] == ["uk"]
+    assert [k["row_id"] for k in seen] == ["row_brief_0"]

@@ -6,6 +6,7 @@ import pytest
 from bizstruct_domain.schemas import ArtifactRecord, ArtifactType, StageResult
 
 from bizstruct_ml.adapters.backend_client import (
+    BackendAuthError,
     BackendClient,
     BackendRejectedError,
     BackendUnavailableError,
@@ -51,7 +52,7 @@ async def test_get_snapshot_asks_for_the_row_and_parses_the_snapshot():
 
 @pytest.mark.parametrize(
     ("status", "error"),
-    [(404, ProjectNotFoundError), (403, BackendRejectedError), (500, BackendUnavailableError), (503, BackendUnavailableError)],
+    [(404, ProjectNotFoundError), (400, BackendRejectedError), (500, BackendUnavailableError), (503, BackendUnavailableError)],
 )
 async def test_get_snapshot_error_mapping(status, error):
     with pytest.raises(error):
@@ -128,3 +129,20 @@ async def test_send_result_timeout_is_unavailable():
 
     with pytest.raises(HookUnavailableError):
         await client_with(handler).send_result(result())
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_a_401_or_403_is_an_auth_error_on_both_calls_and_the_hook_is_not_retried(status):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(status, text="no")
+
+    with pytest.raises(BackendAuthError) as info:
+        await client_with(handler).get_snapshot("p", "r")
+    assert info.value.status_code == status
+    calls["n"] = 0
+    with pytest.raises(BackendAuthError):
+        await client_with(handler).send_result(result())
+    assert calls["n"] == 1
