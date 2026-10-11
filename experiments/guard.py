@@ -22,10 +22,22 @@ def assert_no_secrets(text: str, secrets: list[str]) -> None:
             raise SmokeError(f"refusing to write the dump: it matches {pattern.pattern!r}")
 
 
-def write_dump(project: dict[str, Any], dump_dir: Path, secrets: list[str], now: datetime | None = None) -> Path:
-    text = json.dumps(project, indent=2, ensure_ascii=False)
+def write_guarded(path: Path, text: str, secrets: list[str]) -> Path:
+    """Write the text only if the guard passes (creating the directory)."""
     assert_no_secrets(text, secrets)
-    dump_dir.mkdir(parents=True, exist_ok=True)
-    path = dump_dir / f"{(now or datetime.now()).strftime('%Y%m%d-%H%M%S')}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def append_guarded(path: Path, line: str, secrets: list[str]) -> None:
+    """Append one line (a JSONL record) only if the guard passes."""
+    assert_no_secrets(line, secrets)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+
+
+def write_dump(project: dict[str, Any], dump_dir: Path, secrets: list[str], now: datetime | None = None) -> Path:
+    text = json.dumps(project, indent=2, ensure_ascii=False)
+    return write_guarded(dump_dir / f"{(now or datetime.now()).strftime('%Y%m%d-%H%M%S')}.json", text, secrets)
