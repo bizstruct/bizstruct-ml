@@ -19,6 +19,42 @@ SUMMARY_COLUMNS = (
 )
 
 
+def _flat(meta: dict[str, Any]) -> dict[str, Any]:
+    """The fields that decide comparability, by a readable name."""
+    flat: dict[str, Any] = {"domain_version": meta.get("domain_version"), "uv.lock sha256": meta.get("uv_lock_sha256"),
+                            "ideas file sha256": (meta.get("ideas") or {}).get("sha256"), "config": meta.get("config")}
+    for repo, info in (meta.get("git") or {}).items():
+        flat[f"{repo} head"] = (info or {}).get("head")
+        flat[f"{repo} dirty flag"] = (info or {}).get("dirty")
+    for stage, version in (meta.get("prompt_versions") or {}).items():
+        flat[f"prompt version of {stage}"] = version
+    for name in ("api_image_id", "ml_image_id"):
+        flat[f"docker {name}"] = (meta.get("docker") or {}).get(name)
+    for role in ("generator", "judge"):
+        for key in ("deployment", "model", "model_version"):
+            flat[f"{role} {key}"] = (meta.get(role) or {}).get(key)
+    return flat
+
+
+def incomparable(first: dict[str, Any], other: dict[str, Any]) -> list[str]:
+    """What differs between the first recorded meta and a later one in a way that makes their runs incomparable."""
+    a, b = _flat(first), _flat(other)
+    return [f"{name} changed: {a.get(name)!r} -> {b.get(name)!r}" for name in sorted(a.keys() | b.keys()) if a.get(name) != b.get(name)]
+
+
+def meta_warnings(directory: Path) -> list[str]:
+    """Warnings for the top of a report: every later meta of the run directory compared with the first."""
+    path = directory / "run_meta.json"
+    if not path.exists():
+        return ["no run_meta.json in this directory: the conditions of these runs were not recorded"]
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    lines = []
+    for number, resume in enumerate(meta.get("resumes", []), start=1):
+        for difference in incomparable(meta, resume):
+            lines.append(f"resume {number} ({resume.get('started_at')}): {difference}")
+    return lines
+
+
 def load_latest(path: Path) -> list[dict[str, Any]]:
     latest: dict[tuple[str, int], dict[str, Any]] = {}
     for line in path.read_text(encoding="utf-8").splitlines():

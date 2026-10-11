@@ -2,15 +2,20 @@
 the secret guard, the config registry and the report. No network."""
 import ast
 import asyncio
+import hashlib
+import importlib
 import json
 import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 
+import bizstruct_domain
 import httpx
 import pytest
 
 from experiments import __main__ as cli
 from experiments import report as report_module
+from experiments import run_meta as run_meta_module
 from experiments.configs import CONFIGS, Config, RunOptions
 from experiments.ideaset import Idea, IdeasFileError, load_ideas
 from experiments.runner import RunSpec, estimate_tokens, load_results, plan_runs, select_runs
@@ -64,13 +69,53 @@ def parse(*argv: str):
     return cli.build_parser().parse_args(["run", *argv])
 
 
-async def run_cli(tmp_path, be: MultiBe, ideas: Path, *argv: str, environ=None, ticker: Ticker | None = None):
+class Machine:
+    """Stands in for git, docker and az: answers by command, records every call. `heads` maps repo name -> HEAD."""
+
+    def __init__(self, heads: dict[str, str] | None = None, *, dirty: set[str] = frozenset(), docker: bool = True, az: dict | None = None):
+        self.heads = heads if heads is not None else {r: str(n) * 40 for n, r in enumerate(run_meta_module.SIBLING_REPOS, start=1)}
+        self.dirty, self.docker, self.az = set(dirty), docker, az
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str]) -> str:
+        self.calls.append(argv)
+        if argv[0] == "git":
+            repo = Path(argv[2]).name
+            if argv[3:] == ["rev-parse", "HEAD"]:
+                return self.heads[repo] + "\n"
+            if argv[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "main\n"
+            return " M file\n" if repo in self.dirty else ""
+        if argv[0] == "docker":
+            if not self.docker:
+                raise FileNotFoundError("docker")
+            if argv[1] == "ps":
+                service = [a for a in argv if a.startswith("label=com.docker.compose.service=")][0].rsplit("=", 1)[1]
+                return f"c-{service}\n"
+            return f"sha256:img-{argv[-1]}\n"
+        if argv[0] == "az":
+            if self.az is None:
+                raise FileNotFoundError("az")
+            return json.dumps(self.az)
+        raise AssertionError(argv)
+
+
+def fake_repos(tmp_path: Path, names=("bizstruct-domain", "bizstruct-be", "bizstruct-ml", "bizstruct-fe")) -> Path:
+    root = tmp_path / "repos"
+    for name in names:
+        (root / name).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+async def run_cli(tmp_path, be: MultiBe, ideas: Path, *argv: str, environ=None, ticker: Ticker | None = None, machine: Machine | None = None, repos: Path | None = None):
     args = parse("--ideas", str(ideas), "--out", str(tmp_path / "out"), "--base-url", "http://be.test", "--email", "x@example.com",
                  "--password", PASSWORD, "--poll-interval", "1", *argv)
     lines: list[str] = []
     ticker = ticker or Ticker()
     code = await cli.run_command(args, transport=be.transport(), langfuse_transport=be.langfuse_transport(), environ=environ or {},
-                                 log=lines.append, sleep=ticker.sleep, clock=ticker)
+                                 log=lines.append, sleep=ticker.sleep, clock=ticker, meta_cmd=machine or Machine(),
+                                 repos_root=repos or fake_repos(tmp_path),
+                                 command_line=["python", "-m", "experiments", "run", *argv, "--password", PASSWORD])
     return code, lines
 
 
@@ -365,6 +410,7 @@ async def test_a_result_line_that_would_carry_a_connection_string_is_replaced_by
     await run_cli(tmp_path, be, write_ideas(tmp_path / "i.jsonl", idea("a")))
     (record,) = read_results(tmp_path)
     assert record["status"] == "error" and record["rows"] == [] and record["errors"] == ["result refused by the secret guard"]
+    assert record["meta_ref"] == read_meta(tmp_path)["meta_ref"]
     everything = "".join(p.read_text() for p in (tmp_path / "out").rglob("*") if p.is_file())
     assert "SharedAccessKey" not in everything
 
@@ -533,3 +579,283 @@ async def test_the_shape_counts_canvas_rows_and_orders_the_swots_by_version(tmp_
     (cycle,) = record["shape"]["cycles"]
     assert record["shape"]["canvases"] == 1 and cycle["iterations"] == 5 and cycle["final_version"] == 5
     assert cycle["scores"] == [100, 95, 90, 85, 80]
+
+
+# --------------------------------------------------------------------------- run_meta.json
+
+ENV = {
+    "AZURE_OPENAI_DEPLOYMENT": "gen-deployment", "AZURE_OPENAI_ENDPOINT": "https://user:hunter2@gen.openai.azure.com/path?key=abc",
+    "JUDGE_PROVIDER": "azure_foundry_chat", "JUDGE_DEPLOYMENT": "judge-deployment", "JUDGE_ENDPOINT": "https://judge.services.ai.azure.com/openai/v1",
+}
+AZ = {"properties": {"model": {"name": "gpt-x", "version": "2026-05-01"}}}
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def read_meta(tmp_path) -> dict:
+    return json.loads((tmp_path / "out" / "run_meta.json").read_text())
+
+
+async def meta_run(tmp_path, *argv, machine=None, environ=None, repos=None, ideas=None):
+    be = MultiBe(await base_project())
+    ideas = ideas or write_ideas(tmp_path / "i.jsonl", idea("a"))
+    return await run_cli(tmp_path, be, ideas, *argv, machine=machine or Machine(az=AZ), environ=environ if environ is not None else ENV, repos=repos)
+
+
+async def test_the_meta_records_the_conditions_of_the_run(tmp_path):
+    machine = Machine(dirty={"bizstruct-ml"}, az=AZ)
+    ideas = write_ideas(tmp_path / "i.jsonl", idea("a"))
+    await meta_run(tmp_path, "--repeats", "1", "--concurrency", "2", "--max-runs", "5", "--azure-account-name", "acct", "--azure-resource-group", "rg",
+                   "--compose-project", "bizstruct-smoke", machine=machine, ideas=ideas)
+    meta = read_meta(tmp_path)
+    assert meta["config"] == "pipeline" and meta["started_at"].endswith("+00:00")
+    assert meta["ideas"] == {"path": str(ideas), "sha256": hashlib.sha256(ideas.read_bytes()).hexdigest(), "count": 1}
+    assert (meta["repeats"], meta["concurrency"], meta["max_tokens"], meta["max_runs"]) == (1, 2, None, 5)
+    assert meta["git"]["bizstruct-domain"] == {"head": "1" * 40, "branch": "main", "dirty": False}
+    assert meta["git"]["bizstruct-ml"]["dirty"] is True and set(meta["git"]) == set(run_meta_module.SIBLING_REPOS)
+    assert meta["domain_version"] == bizstruct_domain.__version__
+    assert meta["uv_lock_sha256"] == hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
+    assert meta["docker"] == {"compose_project": "bizstruct-smoke", "api_image_id": "sha256:img-c-api", "ml_image_id": "sha256:img-c-ml"}
+    assert meta["generator"] == {"deployment": "gen-deployment", "endpoint_host": "gen.openai.azure.com", "model": "gpt-x", "model_version": "2026-05-01"}
+    assert meta["judge"]["provider"] == "azure_foundry_chat" and meta["judge"]["deployment"] == "judge-deployment"
+    assert meta["judge"]["endpoint_host"] == "judge.services.ai.azure.com" and meta["judge"]["model_version"] == "2026-05-01"
+    assert meta["meta_warnings"] == [] and meta["resumes"] == []
+    az_calls = [c for c in machine.calls if c[0] == "az"]
+    assert len(az_calls) == 2 and "gen-deployment" in az_calls[0] and "judge-deployment" in az_calls[1]
+
+
+async def test_the_prompt_versions_are_the_constants_of_the_ml_source(tmp_path):
+    await meta_run(tmp_path)
+    versions = read_meta(tmp_path)["prompt_versions"]
+    assert {"brief", "swot", "errc", "storytelling", "future_scenario", "pitch", "canvas", "patterns"} <= set(versions)
+    for stem, version in versions.items():
+        assert version == importlib.import_module(f"bizstruct_ml.llm.prompts.{stem}").PROMPT_VERSION
+
+
+def test_a_module_without_a_prompt_version_is_a_warning_not_an_omission(tmp_path):
+    prompts = tmp_path / "src" / "bizstruct_ml" / "llm" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "good.py").write_text('PROMPT_VERSION = "7"\n')
+    (prompts / "bad.py").write_text("X = 1\n")
+    (prompts / "_private.py").write_text('PROMPT_VERSION = "9"\n')
+    warnings: list[str] = []
+    assert run_meta_module.prompt_versions(tmp_path, warnings) == {"bad": None, "good": "7"}
+    assert warnings == ["prompt_versions.bad: no PROMPT_VERSION constant"]
+
+
+async def test_only_hosts_and_names_are_recorded_and_the_command_is_redacted(tmp_path):
+    await meta_run(tmp_path, "--azure-account-name", "acct")
+    text = (tmp_path / "out" / "run_meta.json").read_text()
+    for leaked in ("hunter2", "key=abc", PASSWORD, "user:"):
+        assert leaked not in text
+    meta = json.loads(text)
+    command = meta["command"]
+    assert command[command.index("--password") + 1] == "<redacted>" and "--azure-account-name" in command
+
+
+def test_the_redaction_of_the_command_line():
+    assert run_meta_module.redact_command(["run", "--password", "p1", "--email", "a@b.c", "--api-key=k2", "--token", "t3", "--out", "runs/x"]) == [
+        "run", "--password", "<redacted>", "--email", "a@b.c", "--api-key=<redacted>", "--token", "<redacted>", "--out", "runs/x"]
+    assert run_meta_module.redact_command(["--max-tokens", "100", "--max-tokens=5"]) == ["--max-tokens", "100", "--max-tokens=5"]  # a budget, not a credential
+
+
+async def test_what_cannot_be_determined_is_null_with_a_reason_never_omitted(tmp_path):
+    machine = Machine(docker=False, az=None)
+    repos = fake_repos(tmp_path, names=("bizstruct-domain", "bizstruct-be", "bizstruct-ml"))  # no bizstruct-fe checkout
+    await meta_run(tmp_path, machine=machine, environ={}, repos=repos)
+    meta = read_meta(tmp_path)
+    assert meta["git"]["bizstruct-fe"] is None and "bizstruct-fe" in meta["git"]
+    assert meta["docker"]["api_image_id"] is None and meta["docker"]["ml_image_id"] is None
+    assert meta["generator"]["deployment"] is None and meta["judge"]["deployment"] is None and meta["judge"]["provider"] is None
+    warnings = "\n".join(meta["meta_warnings"])
+    for expected in ("git.bizstruct-fe: no checkout", "docker.api_image_id: docker unavailable", "docker.ml_image_id: docker unavailable",
+                     "generator.deployment: not set", "judge.deployment: not set", "judge.provider: JUDGE_PROVIDER not set"):
+        assert expected in warnings
+
+
+async def test_a_deployment_without_an_account_name_says_why_the_version_is_missing(tmp_path):
+    await meta_run(tmp_path)
+    meta = read_meta(tmp_path)
+    assert meta["generator"]["model_version"] is None
+    assert any("generator.model_version: --azure-account-name" in w for w in meta["meta_warnings"])
+
+
+async def test_a_failing_az_is_a_warning_and_the_run_goes_on(tmp_path):
+    code, _ = await meta_run(tmp_path, "--azure-account-name", "acct", "--azure-resource-group", "rg", machine=Machine(az=None))
+    meta = read_meta(tmp_path)
+    assert code == 0 and meta["generator"]["model_version"] is None
+    assert any(w.startswith("generator.model_version: az failed") for w in meta["meta_warnings"])
+
+
+async def test_a_container_that_is_not_running_is_a_warning(tmp_path):
+    class NoContainers(Machine):
+        def __call__(self, argv):
+            return "" if argv[:2] == ["docker", "ps"] else super().__call__(argv)
+
+    await meta_run(tmp_path, machine=NoContainers(az=AZ))
+    assert any("no running container of service 'api'" in w for w in read_meta(tmp_path)["meta_warnings"])
+
+
+@pytest.mark.parametrize(
+    ("where", "machine", "environ"),
+    [
+        ("a connection string in a source", Machine(az={"properties": {"model": {"name": "Endpoint=sb://x.servicebus.windows.net/;SharedAccessKey=k", "version": "1"}}}), ENV),
+        ("a connection string in the environment", Machine(az=AZ), {**ENV, "AZURE_OPENAI_DEPLOYMENT": "SharedAccessKey=abc"}),
+        ("the password in the environment", Machine(az=AZ), {**ENV, "JUDGE_DEPLOYMENT": PASSWORD}),
+        ("the token in a source", Machine(az=AZ), {**ENV, "JUDGE_DEPLOYMENT": TOKEN}),
+    ],
+)
+async def test_a_secret_in_any_source_makes_the_write_refuse_and_the_run_does_not_start(tmp_path, where, machine, environ):
+    be = MultiBe(await base_project())
+    code, lines = await run_cli(tmp_path, be, write_ideas(tmp_path / "i.jsonl", idea("a")), "--azure-account-name", "acct", "--azure-resource-group", "rg",
+                                machine=machine, environ=environ)
+    assert code == 1 and any("run_meta.json was not written" in line for line in lines), where
+    assert not (tmp_path / "out" / "run_meta.json").exists() and be.created == []
+    assert not (tmp_path / "out" / "results.jsonl").exists()
+
+
+async def test_a_secret_in_a_resumed_meta_leaves_the_existing_file_untouched(tmp_path):
+    await meta_run(tmp_path, "--repeats", "1")
+    before = (tmp_path / "out" / "run_meta.json").read_text()
+    be = MultiBe(await base_project())
+    code, lines = await run_cli(tmp_path, be, tmp_path / "i.jsonl", "--repeats", "2", machine=Machine(az=AZ), environ={**ENV, "JUDGE_DEPLOYMENT": TOKEN})
+    assert code == 1 and (tmp_path / "out" / "run_meta.json").read_text() == before
+
+
+async def test_every_result_line_carries_the_meta_ref_of_its_meta(tmp_path):
+    await meta_run(tmp_path)
+    meta = read_meta(tmp_path)
+    (record,) = read_results(tmp_path)
+    identity = run_meta_module.identity_of(meta)
+    assert record["meta_ref"] == meta["meta_ref"] == hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    assert "started_at" not in identity and "command" not in identity and "concurrency" not in identity
+
+
+async def test_the_meta_ref_changes_with_a_sha_and_not_with_the_time_or_the_command(tmp_path):
+    base = run_meta_module.collect_meta(command_line=["a"], config="pipeline", ideas_path=SAMPLE, idea_count=2, repeats=1, concurrency=1, max_tokens=None,
+                                        max_runs=None, enable_optional=[], environ={}, cmd=Machine(), repos_root=fake_repos(tmp_path))
+    again = run_meta_module.collect_meta(command_line=["b", "--repeats", "9"], config="pipeline", ideas_path=SAMPLE, idea_count=2, repeats=9, concurrency=4,
+                                         max_tokens=5, max_runs=1, enable_optional=[], environ={}, cmd=Machine(), repos_root=fake_repos(tmp_path),
+                                         now=datetime(2030, 1, 1, tzinfo=timezone.utc))
+    moved = run_meta_module.collect_meta(command_line=["a"], config="pipeline", ideas_path=SAMPLE, idea_count=2, repeats=1, concurrency=1, max_tokens=None,
+                                         max_runs=None, enable_optional=[], environ={}, cmd=Machine(heads={r: "9" * 40 for r in run_meta_module.SIBLING_REPOS}),
+                                         repos_root=fake_repos(tmp_path))
+    assert base["meta_ref"] == again["meta_ref"] != moved["meta_ref"]
+    other_ideas = tmp_path / "other.jsonl"
+    write_ideas(other_ideas, idea("zzz"))
+    changed_ideas = run_meta_module.collect_meta(command_line=["a"], config="pipeline", ideas_path=other_ideas, idea_count=2, repeats=1, concurrency=1,
+                                                 max_tokens=None, max_runs=None, enable_optional=[], environ={}, cmd=Machine(), repos_root=fake_repos(tmp_path))
+    assert changed_ideas["meta_ref"] != base["meta_ref"]
+    dirty = run_meta_module.collect_meta(command_line=["a"], config="pipeline", ideas_path=SAMPLE, idea_count=2, repeats=1, concurrency=1, max_tokens=None,
+                                         max_runs=None, enable_optional=[], environ={}, cmd=Machine(dirty={"bizstruct-be"}), repos_root=fake_repos(tmp_path))
+    assert dirty["meta_ref"] != base["meta_ref"]
+    from unittest import mock
+
+    with mock.patch.object(run_meta_module, "prompt_versions", lambda root, warnings: {"pitch": "42"}):
+        prompts = run_meta_module.collect_meta(command_line=["a"], config="pipeline", ideas_path=SAMPLE, idea_count=2, repeats=1, concurrency=1, max_tokens=None,
+                                               max_runs=None, enable_optional=[], environ={}, cmd=Machine(), repos_root=fake_repos(tmp_path))
+    assert prompts["meta_ref"] != base["meta_ref"]
+
+
+async def test_a_git_that_fails_gives_null_and_a_reason(tmp_path):
+    class BrokenGit(Machine):
+        def __call__(self, argv):
+            if argv[0] == "git" and "bizstruct-be" in argv[2]:
+                raise RuntimeError("fatal: not a git repository")
+            return super().__call__(argv)
+
+    await meta_run(tmp_path, machine=BrokenGit(az=AZ))
+    meta = read_meta(tmp_path)
+    assert meta["git"]["bizstruct-be"] is None and any(w.startswith("git.bizstruct-be: RuntimeError: fatal") for w in meta["meta_warnings"])
+
+
+async def test_every_resume_is_appended_and_none_replaces_another(tmp_path):
+    await meta_run(tmp_path, "--repeats", "1")
+    await two_invocations_tail(tmp_path)
+    be = MultiBe(await base_project())
+    await run_cli(tmp_path, be, tmp_path / "i.jsonl", "--repeats", "3", machine=Machine(az=AZ), environ=ENV)
+    assert [r["repeats"] for r in read_meta(tmp_path)["resumes"]] == [2, 3]
+
+
+# -- a resumed run
+
+async def two_invocations(tmp_path, second_machine, *, second_environ=None):
+    await meta_run(tmp_path, "--repeats", "1")
+    be = MultiBe(await base_project())
+    return await run_cli(tmp_path, be, tmp_path / "i.jsonl", "--repeats", "2", machine=second_machine, environ=second_environ if second_environ is not None else ENV)
+
+
+async def test_a_resume_keeps_the_first_meta_and_appends_the_new_one(tmp_path):
+    await meta_run(tmp_path, "--repeats", "1")
+    first = read_meta(tmp_path)
+    code, lines = await two_invocations_tail(tmp_path)
+    meta = read_meta(tmp_path)
+    assert {k: v for k, v in meta.items() if k != "resumes"} == {k: v for k, v in first.items() if k != "resumes"}
+    assert len(meta["resumes"]) == 1 and meta["resumes"][0]["repeats"] == 2 and "resumes" not in meta["resumes"][0]
+    assert not any(line.startswith("WARNING") for line in lines)  # nothing changed
+
+
+async def two_invocations_tail(tmp_path, machine=None, environ=None):
+    be = MultiBe(await base_project())
+    return await run_cli(tmp_path, be, tmp_path / "i.jsonl", "--repeats", "2", machine=machine or Machine(az=AZ), environ=environ if environ is not None else ENV)
+
+
+@pytest.mark.parametrize(
+    ("machine", "expected"),
+    [
+        (Machine(heads={**{r: str(n) * 40 for n, r in enumerate(run_meta_module.SIBLING_REPOS, 1)}, "bizstruct-ml": "f" * 40}, az=AZ),
+         "bizstruct-ml head changed"),
+        (Machine(dirty={"bizstruct-be"}, az=AZ), "bizstruct-be dirty flag changed: False -> True"),
+    ],
+)
+async def test_a_resume_warns_when_a_sha_or_a_dirty_flag_differs(tmp_path, machine, expected):
+    await meta_run(tmp_path, "--repeats", "1")
+    code, lines = await two_invocations_tail(tmp_path, machine=machine)
+    warnings = [line for line in lines if line.startswith("WARNING: this run is not comparable")]
+    assert code == 0 and len(warnings) == 1 and expected in warnings[0]
+    first, second = (r["meta_ref"] for r in sorted(read_results(tmp_path), key=lambda r: r["repeat"]))
+    assert first != second  # the line of the second invocation is tied to the second meta
+
+
+async def test_a_resume_warns_on_a_changed_domain_version_and_prompt_version(tmp_path, monkeypatch):
+    await meta_run(tmp_path, "--repeats", "1")
+    monkeypatch.setattr(bizstruct_domain, "__version__", "99.0.0")
+    real = run_meta_module.prompt_versions
+    monkeypatch.setattr(run_meta_module, "prompt_versions", lambda root, warnings: {**real(root, warnings), "pitch": "42"})
+    code, lines = await two_invocations_tail(tmp_path)
+    text = "\n".join(lines)
+    assert "domain_version changed" in text and "99.0.0" in text and "prompt version of pitch changed: '1' -> '42'" in text
+
+
+async def test_a_resume_warns_when_the_ideas_file_or_the_deployment_changed(tmp_path):
+    await meta_run(tmp_path, "--repeats", "1")
+    write_ideas(tmp_path / "i.jsonl", idea("a"), idea("b", text=TEXT + " b"))
+    code, lines = await two_invocations_tail(tmp_path, environ={**ENV, "AZURE_OPENAI_DEPLOYMENT": "other-deployment"})
+    text = "\n".join(lines)
+    assert "ideas file sha256 changed" in text and "generator deployment changed: 'gen-deployment' -> 'other-deployment'" in text
+
+
+async def test_the_report_prints_the_resume_warning_at_the_top(tmp_path, capsys):
+    await meta_run(tmp_path, "--repeats", "1")
+    machine = Machine(heads={r: "e" * 40 for r in run_meta_module.SIBLING_REPOS}, az=AZ)
+    await two_invocations_tail(tmp_path, machine=machine)
+    assert cli.report_command(cli.build_parser().parse_args(["report", str(tmp_path / "out")])) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("WARNING: resume 1 (") and "head changed" in out[0]
+    assert any("scope" in line for line in out[1:])  # the tables follow the warnings
+
+
+async def test_the_report_has_no_warning_for_comparable_resumes_and_notes_a_missing_meta(tmp_path, capsys):
+    await meta_run(tmp_path, "--repeats", "1")
+    await two_invocations_tail(tmp_path)
+    cli.report_command(cli.build_parser().parse_args(["report", str(tmp_path / "out")]))
+    assert "WARNING" not in capsys.readouterr().out
+    (tmp_path / "out" / "run_meta.json").unlink()
+    cli.report_command(cli.build_parser().parse_args(["report", str(tmp_path / "out")]))
+    assert capsys.readouterr().out.startswith("WARNING: no run_meta.json")
+
+
+async def test_a_dry_run_writes_no_meta_and_runs_no_subprocess(tmp_path):
+    machine = Machine()
+    args = parse("--ideas", str(SAMPLE), "--out", str(tmp_path / "out"), "--dry-run")
+    await cli.run_command(args, log=lambda line: None, meta_cmd=machine)
+    assert machine.calls == [] and not (tmp_path / "out").exists()

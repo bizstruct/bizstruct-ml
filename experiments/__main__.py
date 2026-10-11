@@ -15,6 +15,7 @@ from experiments.checks import OPTIONAL_STAGES
 from experiments.client import Session, SmokeError
 from experiments.configs import CONFIGS, RunOptions, get_config
 from experiments.ideaset import IdeasFileError, load_ideas
+from experiments.run_meta import write_meta, collect_meta
 from experiments.runner import (
     Budget,
     Context,
@@ -49,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--email", help="the experiment user (required unless --dry-run)")
     run.add_argument("--password", default=os.environ.get("SMOKE_PASSWORD"), help="default: $SMOKE_PASSWORD")
     run.add_argument("--timeout", type=float, default=1800, help="seconds per project")
+    run.add_argument("--compose-project", default="bizstruct-stack", help="docker compose project whose api/ml image ids go into run_meta.json")
+    run.add_argument("--azure-account-name", help="Azure OpenAI/Foundry account, to look up the generator's model version with `az`")
+    run.add_argument("--judge-azure-account-name", help="account of the judge deployment (default: --azure-account-name)")
+    run.add_argument("--azure-resource-group", help="resource group of the account(s)")
     run.add_argument("--poll-interval", type=float, default=5.0)
 
     report = commands.add_parser("report", help="summarise a run directory")
@@ -75,8 +80,11 @@ async def run_command(
     log=print,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     clock: Callable[[], float] = time.monotonic,
+    command_line: list[str] | None = None,
+    meta_cmd=None,
+    repos_root: Path | None = None,
 ) -> int:
-    """`transport`, `langfuse_transport`, `environ`, `sleep` and `clock` are for the offline tests."""
+    """`transport`, `langfuse_transport`, `environ`, `sleep`, `clock`, `meta_cmd` and `repos_root` are for the offline tests."""
     try:
         ideas = load_ideas(args.ideas)
     except IdeasFileError as error:
@@ -113,7 +121,24 @@ async def run_command(
             log(f"FAIL: {error}")
             return 1
         secrets = lambda: [args.password, session.token or "", *(([langfuse.public_key, langfuse.secret_key]) if langfuse else [])]  # noqa: E731
-        ctx = Context(session=session, config=config, out_dir=args.out, timeout=args.timeout, poll_interval=args.poll_interval,
+        meta = collect_meta(
+            command_line=command_line if command_line is not None else ["python", "-m", "experiments", *sys.argv[1:]],
+            config=config.name, ideas_path=args.ideas, idea_count=len(ideas), repeats=args.repeats, concurrency=args.concurrency,
+            max_tokens=args.max_tokens, max_runs=args.max_runs, enable_optional=list(args.enable_optional), environ=environ,
+            compose_project=args.compose_project, azure_account_name=args.azure_account_name,
+            azure_resource_group=args.azure_resource_group, judge_azure_account_name=args.judge_azure_account_name,
+            **({"cmd": meta_cmd} if meta_cmd else {}), **({"repos_root": repos_root} if repos_root else {}),
+        )
+        try:
+            _, drift = write_meta(args.out, meta, secrets())
+        except SmokeError as error:
+            log(f"FAIL: run_meta.json was not written, so the run does not start: {error}")
+            return 1
+        for line in meta["meta_warnings"]:
+            log(f"meta warning: {line}")
+        for line in drift:
+            log(f"WARNING: this run is not comparable with the first one of {args.out}: {line}")
+        ctx = Context(session=session, meta_ref=meta["meta_ref"], config=config, out_dir=args.out, timeout=args.timeout, poll_interval=args.poll_interval,
                       langfuse=langfuse, secrets=secrets, sleep=sleep, clock=clock, log=log)
         result = await run_experiment(ctx, selection.to_run, concurrency=args.concurrency, budget=budget)
     completed = sum(r["status"] == "completed" for r in result.records)
@@ -128,6 +153,8 @@ def report_command(args: argparse.Namespace, log=print) -> int:
     if not path.exists():
         log(f"FAIL: {path} does not exist")
         return 2
+    for line in report_module.meta_warnings(args.directory):
+        log(f"WARNING: {line}")
     records = report_module.load_latest(path)
     if not records:
         log(f"FAIL: {path} holds no runs")

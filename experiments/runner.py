@@ -168,6 +168,7 @@ class Context:
     poll_interval: float
     langfuse: LangfuseOptions | None
     secrets: Callable[[], list[str]]
+    meta_ref: str | None = None
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     clock: Callable[[], float] = time.monotonic
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
@@ -179,7 +180,7 @@ async def execute_run(ctx: Context, spec: RunSpec) -> dict[str, Any]:
     record: dict[str, Any] = {
         "idea_id": spec.idea.id, "repeat": spec.repeat, "config": ctx.config.name, "project_id": None,
         "started_at": _utc(ctx.now()), "finished_at": None, "status": "error", "wall_clock_s": None,
-        "rows": [], "shape": None, "checks": None, "tokens": None, "errors": [],
+        "rows": [], "shape": None, "checks": None, "tokens": None, "errors": [], "meta_ref": ctx.meta_ref,
     }
     started = ctx.clock()
     project: dict[str, Any] | None = None
@@ -265,7 +266,7 @@ async def run_experiment(ctx: Context, specs: list[RunSpec], *, concurrency: int
             try:
                 append_guarded(results_path, json.dumps(record, ensure_ascii=False), ctx.secrets())
             except SmokeError:  # keep a line, without the content that tripped the guard
-                record = {k: record[k] for k in ("idea_id", "repeat", "config", "project_id", "started_at", "finished_at", "wall_clock_s")}
+                record = {k: record[k] for k in ("idea_id", "repeat", "config", "project_id", "started_at", "finished_at", "wall_clock_s", "meta_ref")}
                 record |= {"status": "error", "rows": [], "shape": None, "checks": None, "tokens": None, "errors": ["result refused by the secret guard"]}
                 append_guarded(results_path, json.dumps(record, ensure_ascii=False), ctx.secrets())
             result.records.append(record)
