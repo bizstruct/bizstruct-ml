@@ -1,0 +1,2 @@
+{"id": "sample-farm", "language": "en", "text": "An app that delivers boxes of fresh produce from local farms to busy city parents.", "expected_shape": "one_segment", "tags": ["sample", "consumer"]}
+{"id": "sample-beer", "language": "uk", "text": "Сервіс щомісячної підписки на набори для домашнього пивоваріння для любителів крафту.", "expected_shape": "ambiguous", "tags": ["sample", "uk"]}

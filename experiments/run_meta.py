@@ -1,266 +1,227 @@
-"""Gathers and writes run_meta.json — the conditions a run was produced
-under, so results are interpretable months later without guessing.
+"""run_meta.json: the conditions an experiment was produced under, so its results stay interpretable later.
 
-Everything here is read from outside bizstruct-ml (env vars, git, docker,
-the Azure control plane via `az`) — nothing changes worker code. Any field
-that can't be determined is written as null with the reason recorded in
-meta_warnings, never silently omitted (see the experiment brief, part A1).
+Everything is read from OUTSIDE the worker: the sibling git checkouts, the installed bizstruct-domain, uv.lock, docker,
+`az` and the environment variables of the current shell. The worker's `.env` files are never read. The prompt versions
+are read by PARSING the `PROMPT_VERSION = "..."` constants of `src/bizstruct_ml/llm/prompts/*.py` (ast, no import):
+this module imports no ml worker code. Only hosts and names are recorded, never keys or connection strings; the secret
+guard runs over the file before it is written. A value that cannot be determined is null with the reason in
+`meta_warnings`, never silently omitted.
 
-No secrets: only hosts/names are recorded, never keys or connection
-strings (see _redact_endpoint / the deliberate omission of API keys below).
-"""
+A resumed run (same output directory) leaves the first meta in place and appends the new one to `resumes`; the report
+warns when a recorded SHA, dirty flag, version or deployment differs (`incomparable`, in report.py)."""
 
-from __future__ import annotations
-
+import ast
 import hashlib
 import json
-import os
+import re
 import subprocess
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
+import bizstruct_domain
 
-REPO_ROOT = Path(__file__).resolve().parents[2]  # .../bizstruct/
-SIBLING_REPOS = ["bizstruct-domain", "bizstruct-be", "bizstruct-ml", "bizstruct-fe"]
+from experiments.guard import write_guarded
+from experiments.report import incomparable
 
+ML_ROOT = Path(__file__).resolve().parent.parent
+REPOS_ROOT = ML_ROOT.parent  # .../bizstruct/, where the sibling checkouts live
+SIBLING_REPOS = ("bizstruct-domain", "bizstruct-be", "bizstruct-ml", "bizstruct-fe")
+DEFAULT_COMPOSE_PROJECT = "bizstruct-stack"
+SECRET_FLAG = re.compile(r"(password|key|token|secret)", re.I)
+NOT_SECRET_FLAGS = {"--max-tokens"}  # a budget, not a credential
 
-class RunMeta(BaseModel):
-    run_id: str
-    configuration: str
-    deployment: str | None = None
-    model_version: str | None = None
-    endpoint: str | None = None
-    temperature: float | None = None
-    generation_params: dict[str, Any] = Field(default_factory=dict)
-    guardrails: str | None = None
-    dataset_path: str
-    dataset_sha256: str
-    dataset_size: int
-    domain_version: str | None = None
-    git_commits: dict[str, str | None] = Field(default_factory=dict)
-    git_dirty: dict[str, bool | None] = Field(default_factory=dict)
-    concurrency: int
-    project_timeout: float
-    poll_interval: float
-    worker_replicas: int | None = None
-    started_at: str
-    finished_at: str | None = None
-    mode: str
-    # Fixed condition for mode="language_comparison" runs (part F) — the
-    # generation language ("uk"/"en") every task in this run was submitted
-    # with. None for every other mode (language wasn't a controlled
-    # variable before part E).
-    language: str | None = None
-    meta_warnings: list[str] = Field(default_factory=list)
+Cmd = Callable[[list[str]], str]  # runs a command and returns its stdout; raises on failure
 
 
-def _sha256_and_size(path: Path) -> tuple[str, int]:
-    data = path.read_bytes()
-    return hashlib.sha256(data).hexdigest(), len(data)
+def default_cmd(argv: list[str]) -> str:
+    return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=True).stdout
 
 
-def _git_info(repo_name: str, warnings: list[str]) -> tuple[str | None, bool | None]:
-    repo_path = REPO_ROOT / repo_name
-    if not repo_path.exists():
-        warnings.append(f"git_commits.{repo_name}: repo path not found at {repo_path}")
-        return None, None
-    try:
-        sha = subprocess.run(
-            ["git", "-C", str(repo_path), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=10, check=True,
-        ).stdout.strip()
-    except Exception as e:  # noqa: BLE001
-        warnings.append(f"git_commits.{repo_name}: {e}")
-        sha = None
-    try:
-        status = subprocess.run(
-            ["git", "-C", str(repo_path), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=10, check=True,
-        ).stdout
-        dirty = bool(status.strip())
-    except Exception as e:  # noqa: BLE001
-        warnings.append(f"git_dirty.{repo_name}: {e}")
-        dirty = None
-    return sha, dirty
+def redact_command(argv: list[str]) -> list[str]:
+    """The command line with the value of every key/password/token/secret option replaced."""
+    redacted: list[str] = []
+    hide_next = False
+    for arg in argv:
+        if hide_next:
+            redacted.append("<redacted>")
+            hide_next = False
+        elif arg.startswith("--") and "=" in arg and arg.split("=", 1)[0] not in NOT_SECRET_FLAGS and SECRET_FLAG.search(arg.split("=", 1)[0]):
+            redacted.append(arg.split("=", 1)[0] + "=<redacted>")
+        elif arg.startswith("--") and arg not in NOT_SECRET_FLAGS and SECRET_FLAG.search(arg):
+            redacted.append(arg)
+            hide_next = True
+        else:
+            redacted.append(arg)
+    return redacted
 
 
-def _domain_version(warnings: list[str]) -> str | None:
-    try:
-        import bizstruct_domain
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
-        return bizstruct_domain.__version__
-    except Exception as e:  # noqa: BLE001
-        warnings.append(f"domain_version: could not import bizstruct_domain ({e})")
+
+def _git(repo: str, repos_root: Path, cmd: Cmd, warnings: list[str]) -> dict[str, Any] | None:
+    path = repos_root / repo
+    if not path.is_dir():
+        warnings.append(f"git.{repo}: no checkout at {path}")
         return None
-
-
-def _worker_replicas(name_prefix: str, warnings: list[str]) -> int | None:
-    """Counts running containers by name prefix — a docker-compose-specific
-    proxy for replica count. Documented as such: on KEDA/Azure Container
-    Apps this wouldn't apply and would need the ACA API instead (not
-    implemented — this deployment is docker-compose)."""
     try:
-        result = subprocess.run(
-            ["docker", "ps", "--filter", f"name={name_prefix}", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=10, check=True,
-        )
-        names = [n for n in result.stdout.splitlines() if n.strip()]
-        return len(names)
-    except Exception as e:  # noqa: BLE001
-        warnings.append(f"worker_replicas: docker ps failed ({e}); is docker available here?")
+        head = cmd(["git", "-C", str(path), "rev-parse", "HEAD"]).strip()
+        branch = cmd(["git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        dirty = bool(cmd(["git", "-C", str(path), "status", "--porcelain"]).strip())
+    except Exception as error:  # noqa: BLE001 - any failure of the subprocess is a null plus a reason
+        warnings.append(f"git.{repo}: {type(error).__name__}: {str(error)[:200]}")
         return None
+    return {"head": head, "branch": branch, "dirty": dirty}
 
 
-def _redact_endpoint(url: str | None) -> str | None:
-    if not url:
-        return None
-    parsed = urlparse(url)
-    return f"{parsed.scheme}://{parsed.hostname}" if parsed.hostname else None
-
-
-def _azure_deployment_info(
-    *, resource_group: str | None, account_name: str | None, deployment_name: str | None,
-    warnings: list[str],
-) -> dict[str, Any]:
-    """Best-effort query of the Azure control plane for facts the worker's
-    own env/config can't provide (deployed model version, content-filter
-    policy, auto-upgrade setting). Requires `az` logged in and
-    resource_group/account_name — both optional CLI args since a run
-    without Azure CLI access should still produce a run_meta.json, just
-    with these fields null."""
-    out: dict[str, Any] = {"model_version": None, "guardrails": None}
-    if not (resource_group and account_name and deployment_name):
-        warnings.append(
-            "azure_deployment_info: --azure-resource-group/--azure-account-name not given, "
-            "skipping model_version/guardrails lookup"
-        )
-        return out
-    try:
-        result = subprocess.run(
-            [
-                "az", "cognitiveservices", "account", "deployment", "show",
-                "-n", account_name, "-g", resource_group,
-                "--deployment-name", deployment_name, "-o", "json",
-            ],
-            capture_output=True, text=True, timeout=30, check=True,
-        )
-        data = json.loads(result.stdout)
-        props = data.get("properties", {})
-        out["model_version"] = props.get("model", {}).get("version")
-        out["guardrails"] = props.get("raiPolicyName")
-        out["version_upgrade_option"] = props.get("versionUpgradeOption")
-        out["sku_capacity"] = data.get("sku", {}).get("capacity")
-    except Exception as e:  # noqa: BLE001
-        warnings.append(f"azure_deployment_info: az cognitiveservices query failed ({e})")
-    return out
-
-
-def build_run_meta(
-    *,
-    run_id: str,
-    configuration: str,
-    mode: str,
-    dataset_path: Path,
-    concurrency: int,
-    project_timeout: float,
-    poll_interval: float,
-    ml_env: dict[str, str],
-    azure_resource_group: str | None,
-    azure_account_name: str | None,
-    docker_name_prefix: str = "bizstruct_ml",
-    language: str | None = None,
-) -> RunMeta:
-    warnings: list[str] = []
-
-    dataset_sha256, dataset_size = _sha256_and_size(dataset_path)
-
-    git_commits: dict[str, str | None] = {}
-    git_dirty: dict[str, bool | None] = {}
-    for repo in SIBLING_REPOS:
-        sha, dirty = _git_info(repo, warnings)
-        git_commits[repo] = sha
-        git_dirty[repo] = dirty
-
-    deployment = ml_env.get("AZURE_OPENAI_DEPLOYMENT")
-    endpoint = _redact_endpoint(ml_env.get("AZURE_OPENAI_ENDPOINT"))
-
-    azure_info = _azure_deployment_info(
-        resource_group=azure_resource_group,
-        account_name=azure_account_name,
-        deployment_name=deployment,
-        warnings=warnings,
-    )
-
-    # The worker (bizstruct_ml.llm.client.LLMClient.generate_structured)
-    # does not set temperature, top_p, or any other generation parameter —
-    # it calls beta.chat.completions.parse() with only model/messages/
-    # response_format. So there is nothing to read here; recorded as null
-    # with an explicit reason rather than silently omitted.
-    warnings.append(
-        "temperature/generation_params: bizstruct_ml.llm.client.LLMClient does not set "
-        "temperature or any other sampling parameter — the API default applies, unrecorded "
-        "anywhere in the worker's own config."
-    )
-
-    return RunMeta(
-        run_id=run_id,
-        configuration=configuration,
-        deployment=deployment,
-        model_version=azure_info.get("model_version"),
-        endpoint=endpoint,
-        temperature=None,
-        generation_params={},
-        guardrails=azure_info.get("guardrails"),
-        dataset_path=str(dataset_path),
-        dataset_sha256=dataset_sha256,
-        dataset_size=dataset_size,
-        domain_version=_domain_version(warnings),
-        git_commits=git_commits,
-        git_dirty=git_dirty,
-        concurrency=concurrency,
-        project_timeout=project_timeout,
-        poll_interval=poll_interval,
-        worker_replicas=_worker_replicas(docker_name_prefix, warnings),
-        started_at=datetime.now(timezone.utc).isoformat(),
-        finished_at=None,
-        mode=mode,
-        language=language,
-        meta_warnings=warnings,
-    )
-
-
-def read_ml_env(env_path: Path) -> dict[str, str]:
-    """Minimal .env parser (KEY=VALUE per line, '#' comments, optional
-    quotes) — used only to read non-secret fields (deployment, endpoint).
-    Deliberately does not shell out to `source` (avoids executing the file)."""
-    env: dict[str, str] = {}
-    if not env_path.exists():
-        return env
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+def prompt_versions(ml_root: Path, warnings: list[str]) -> dict[str, str | None]:
+    """{prompt module: PROMPT_VERSION}, parsed from the source (swot and errc belong to the swot_errc_cycle stage)."""
+    versions: dict[str, str | None] = {}
+    directory = ml_root / "src" / "bizstruct_ml" / "llm" / "prompts"
+    if not directory.is_dir():
+        warnings.append(f"prompt_versions: {directory} not found")
+        return versions
+    for path in sorted(directory.glob("*.py")):
+        if path.stem.startswith("_") or path.stem == "__init__":
             continue
-        key, _, value = line.partition("=")
-        value = value.strip().strip('"').strip("'")
-        env[key.strip()] = value
-    return env
+        version = None
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "PROMPT_VERSION" for t in node.targets):
+                version = ast.literal_eval(node.value)
+        if version is None:
+            warnings.append(f"prompt_versions.{path.stem}: no PROMPT_VERSION constant")
+        versions[path.stem] = version
+    return versions
 
 
-def write_run_meta(meta: RunMeta, out_dir: Path) -> Path:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "run_meta.json"
-    path.write_text(meta.model_dump_json(indent=2), encoding="utf-8")
-    return path
+def _host(url: str | None) -> str | None:
+    parsed = urlparse(url) if url else None
+    return parsed.hostname if parsed and parsed.hostname else None
 
 
-def finalize_run_meta(out_dir: Path) -> None:
-    """Stamps finished_at on the run_meta.json already written at start."""
+def _model(role: str, deployment: str | None, endpoint: str | None, account: str | None, group: str | None,
+           cmd: Cmd, warnings: list[str]) -> dict[str, Any]:
+    info: dict[str, Any] = {"deployment": deployment, "endpoint_host": _host(endpoint), "model": None, "model_version": None}
+    if not deployment:
+        warnings.append(f"{role}.deployment: not set in the environment of this shell (the worker's .env is deliberately not read)")
+        return info
+    if not (account and group):
+        warnings.append(f"{role}.model_version: --azure-account-name / --azure-resource-group not given, so `az` was not asked")
+        return info
+    try:
+        data = json.loads(cmd(["az", "cognitiveservices", "account", "deployment", "show", "-n", account, "-g", group,
+                               "--deployment-name", deployment, "-o", "json"]))
+        model = data.get("properties", {}).get("model", {})
+        info["model"], info["model_version"] = model.get("name"), model.get("version")
+    except Exception as error:  # noqa: BLE001
+        warnings.append(f"{role}.model_version: az failed ({type(error).__name__}: {str(error)[:200]})")
+    return info
+
+
+def _image(service: str, project: str, cmd: Cmd, warnings: list[str]) -> str | None:
+    try:
+        ids = cmd(["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={project}",
+                   "--filter", f"label=com.docker.compose.service={service}"]).split()
+        if not ids:
+            warnings.append(f"docker.{service}_image_id: no running container of service {service!r} in compose project {project!r}")
+            return None
+        return cmd(["docker", "inspect", "--format", "{{.Image}}", ids[0]]).strip() or None
+    except Exception as error:  # noqa: BLE001
+        warnings.append(f"docker.{service}_image_id: docker unavailable ({type(error).__name__}: {str(error)[:200]})")
+        return None
+
+
+def identity_of(meta: Mapping[str, Any]) -> dict[str, Any]:
+    """The fields that decide whether two runs are comparable (no time, command, sizes or branch names)."""
+    return {
+        "config": meta["config"],
+        "ideas_sha256": meta["ideas"]["sha256"],
+        "git": {repo: (None if info is None else {"head": info["head"], "dirty": info["dirty"]}) for repo, info in meta["git"].items()},
+        "domain_version": meta["domain_version"],
+        "uv_lock_sha256": meta["uv_lock_sha256"],
+        "prompt_versions": meta["prompt_versions"],
+        "docker": meta["docker"],
+        "generator": {k: meta["generator"][k] for k in ("deployment", "model", "model_version")},
+        "judge": {k: meta["judge"][k] for k in ("provider", "deployment", "model", "model_version")},
+    }
+
+
+def meta_ref_of(meta: Mapping[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(identity_of(meta), sort_keys=True).encode()).hexdigest()
+
+
+def collect_meta(
+    *,
+    command_line: list[str],
+    config: str,
+    ideas_path: Path,
+    idea_count: int,
+    repeats: int,
+    concurrency: int,
+    max_tokens: int | None,
+    max_runs: int | None,
+    enable_optional: list[str],
+    environ: Mapping[str, str],
+    compose_project: str = DEFAULT_COMPOSE_PROJECT,
+    azure_account_name: str | None = None,
+    azure_resource_group: str | None = None,
+    judge_azure_account_name: str | None = None,
+    cmd: Cmd = default_cmd,
+    repos_root: Path = REPOS_ROOT,
+    ml_root: Path = ML_ROOT,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    warnings: list[str] = []
+    lock = ml_root / "uv.lock"
+    if lock.exists():
+        lock_sha: str | None = _sha256(lock)
+    else:
+        lock_sha = None
+        warnings.append(f"uv_lock_sha256: {lock} not found")
+    meta: dict[str, Any] = {
+        "schema": 1,
+        "started_at": (now or datetime.now(timezone.utc)).isoformat(timespec="seconds"),
+        "command": redact_command(command_line),
+        "config": config,
+        "ideas": {"path": str(ideas_path), "sha256": _sha256(ideas_path), "count": idea_count},
+        "repeats": repeats, "concurrency": concurrency, "max_tokens": max_tokens, "max_runs": max_runs,
+        "enable_optional": enable_optional,
+        "git": {repo: _git(repo, repos_root, cmd, warnings) for repo in SIBLING_REPOS},
+        "domain_version": getattr(bizstruct_domain, "__version__", None),
+        "uv_lock_sha256": lock_sha,
+        "prompt_versions": prompt_versions(ml_root, warnings),
+        "docker": {
+            "compose_project": compose_project,
+            "api_image_id": _image("api", compose_project, cmd, warnings),
+            "ml_image_id": _image("ml", compose_project, cmd, warnings),
+        },
+        "generator": _model("generator", environ.get("AZURE_OPENAI_DEPLOYMENT"), environ.get("AZURE_OPENAI_ENDPOINT"),
+                            azure_account_name, azure_resource_group, cmd, warnings),
+        "judge": {"provider": environ.get("JUDGE_PROVIDER"),
+                  **_model("judge", environ.get("JUDGE_DEPLOYMENT"), environ.get("JUDGE_ENDPOINT"),
+                           judge_azure_account_name or azure_account_name, azure_resource_group, cmd, warnings)},
+    }
+    if meta["domain_version"] is None:
+        warnings.append("domain_version: bizstruct_domain has no __version__")
+    if meta["judge"]["provider"] is None:
+        warnings.append("judge.provider: JUDGE_PROVIDER not set in the environment of this shell")
+    meta["meta_warnings"] = warnings
+    meta["meta_ref"] = meta_ref_of(meta)
+    return meta
+
+
+def write_meta(out_dir: Path, meta: dict[str, Any], secrets: list[str]) -> tuple[Path, list[str]]:
+    """Write run_meta.json (the secret guard runs first), or on a resume append to its `resumes` list.
+    Returns the path and the warnings about runs that are no longer comparable with the first."""
     path = out_dir / "run_meta.json"
     if not path.exists():
-        return
-    data = json.loads(path.read_text(encoding="utf-8"))
-    data["finished_at"] = datetime.now(timezone.utc).isoformat()
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        write_guarded(path, json.dumps({**meta, "resumes": []}, indent=2, ensure_ascii=False), secrets)
+        return path, []
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    warnings = incomparable(existing, meta)
+    existing.setdefault("resumes", []).append(meta)
+    write_guarded(path, json.dumps(existing, indent=2, ensure_ascii=False), secrets)
+    return path, warnings

@@ -12,6 +12,8 @@ import pytest
 from bizstruct_domain.schemas import ConsistencyReport, ConsistencyViolation, Stage
 from bizstruct_domain.schemas import StageErrorCode
 
+from experiments import guard
+from experiments import langfuse as lfx
 from bizstruct_ml.judge.fake import FakeJudgeModel
 from tests.support.fake_backend import FakeBackend
 from tests.support.projects import NO_FINDINGS, ONE, SPLIT_IN_TWO, THREE_IN_ONE_MULTI_SIDED, scripted_llm, stage_runner
@@ -385,8 +387,8 @@ async def test_a_cycle_without_swots_cannot_yield_a_final_canvas(smoke):
 def test_the_dump_guard_refuses_tokens_passwords_and_connection_strings(smoke, tmp_path):
     for text in (f'{{"x": "{TOKEN}"}}', f'{{"x": "{PASSWORD}"}}', '{"x": "SharedAccessKey=abc"}', '{"x": "Endpoint=sb://ns.servicebus.windows.net/"}'):
         with pytest.raises(smoke.SmokeError):
-            smoke.assert_no_secrets(text, [TOKEN, PASSWORD])
-    smoke.assert_no_secrets('{"x": "clean"}', [TOKEN, PASSWORD])
+            guard.assert_no_secrets(text, [TOKEN, PASSWORD])
+    guard.assert_no_secrets('{"x": "clean"}', [TOKEN, PASSWORD])
 
 
 def test_the_arguments_are_validated(smoke, monkeypatch):
@@ -544,7 +546,7 @@ async def test_every_page_is_read_and_the_older_usage_field_is_understood(smoke,
 
 
 def test_the_ledger_is_read_by_table_header(smoke):
-    ledger = smoke.load_ledger()  # the real file: loose checks, it grows with every measurement
+    ledger = lfx.load_ledger()  # the real file: loose checks, it grows with every measurement
     assert {3204, 3474, 3509} <= set(ledger["pitch"]) and len(ledger["ALL"]) >= 3 and len(ledger["swot_errc_cycle"]) >= 3
     assert "brief" in ledger and "canvas" in ledger
 
@@ -564,13 +566,13 @@ async def test_the_host_and_the_basic_auth_come_from_the_environment(smoke, tmp_
     assert {request.url.host for request in lf.requests} == {"lf.test"}
     sent = base64.b64decode(lf.requests[0].headers["authorization"].split()[1]).decode()
     assert sent == "pk-lf-PUBLIC123:sk-lf-SECRET456"
-    assert smoke.langfuse_settings({"LANGFUSE_PUBLIC_KEY": "a", "LANGFUSE_SECRET_KEY": "b"})[2] == smoke.DEFAULT_LANGFUSE_HOST
+    assert lfx.langfuse_settings({"LANGFUSE_PUBLIC_KEY": "a", "LANGFUSE_SECRET_KEY": "b"})[2] == lfx.DEFAULT_LANGFUSE_HOST
 
 
 def test_a_generation_without_a_total_is_summed_from_input_and_output(smoke):
-    assert smoke._usage_of({"usageDetails": {"input": 7, "output": 3}}) == (7, 3, 10)
-    assert smoke._usage_of({"usageDetails": {"input": 7, "output": 3, "total": 12}}) == (7, 3, 12)
-    assert smoke._usage_of({}) == (0, 0, 0)
+    assert lfx._usage_of({"usageDetails": {"input": 7, "output": 3}}) == (7, 3, 10)
+    assert lfx._usage_of({"usageDetails": {"input": 7, "output": 3, "total": 12}}) == (7, 3, 12)
+    assert lfx._usage_of({}) == (0, 0, 0)
 
 
 async def test_a_rate_limited_langfuse_is_waited_for_with_retry_after(smoke, tmp_path):
@@ -597,4 +599,4 @@ async def test_a_langfuse_that_stays_rate_limited_is_reported_as_429(smoke, tmp_
     lf = FakeLangfuse(project, status=429)
     outcome, lines, _ = await langfuse_run(smoke, tmp_path, lf, LF_KEYS, project, sleep=Clock().sleep)
     assert outcome.ok and any("HTTP 429" in line for line in lines)
-    assert len(lf.requests) == smoke.LANGFUSE_RATE_LIMIT_RETRIES
+    assert len(lf.requests) == lfx.LANGFUSE_RATE_LIMIT_RETRIES

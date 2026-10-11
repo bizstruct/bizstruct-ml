@@ -1,251 +1,180 @@
-"""Builds summary.md from runs.jsonl + metrics.csv + run_meta.json, the
-shared cost calculation used by both `report` and the pilot's cost
-projection, and the cross-run `compare` table (part A4)."""
+"""Summaries of a finished (or interrupted) experiment from its results.jsonl: standard library only.
 
-from __future__ import annotations
+The latest line per (idea, repeat) counts. Per idea and overall: n, completion rate, median and IQR of wall-clock
+and tokens, the distribution of cycle iterations and final version, violation counts per rule id and severity,
+and the reasons runs failed."""
 
 import csv
 import json
+import statistics
 from collections import Counter
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from experiments.common import RunRecord, load_existing_results
-
-
-@dataclass
-class TokenTotals:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    rows: int = 0
-    total_retries: int = 0
-    rows_with_retries: int = 0
-    latencies_ms: list[int] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.latencies_ms is None:
-            self.latencies_ms = []
-
-    @property
-    def avg_latency_ms(self) -> float:
-        return sum(self.latencies_ms) / len(self.latencies_ms) if self.latencies_ms else 0.0
-
-    @property
-    def avg_retries_per_block(self) -> float:
-        return self.total_retries / self.rows if self.rows else 0.0
+ALL = "ALL"
+SUMMARY_COLUMNS = (
+    "scope", "n", "completed", "completion_rate",
+    "wall_median_s", "wall_q1_s", "wall_q3_s",
+    "tokens_n", "tokens_median", "tokens_q1", "tokens_q3",
+)
 
 
-def load_metrics_totals(csv_path: Path) -> TokenTotals:
-    totals = TokenTotals()
-    if not csv_path.exists():
-        return totals
-    with csv_path.open("r", encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            totals.rows += 1
-            if row["input_tokens"]:
-                totals.input_tokens += int(row["input_tokens"])
-            if row["output_tokens"]:
-                totals.output_tokens += int(row["output_tokens"])
-            if row["latency_ms"]:
-                totals.latencies_ms.append(int(row["latency_ms"]))
-            retries = int(row["retries"]) if row["retries"] else 0
-            totals.total_retries += retries
-            if retries > 0:
-                totals.rows_with_retries += 1
-    return totals
+def _flat(meta: dict[str, Any]) -> dict[str, Any]:
+    """The fields that decide comparability, by a readable name."""
+    flat: dict[str, Any] = {"domain_version": meta.get("domain_version"), "uv.lock sha256": meta.get("uv_lock_sha256"),
+                            "ideas file sha256": (meta.get("ideas") or {}).get("sha256"), "config": meta.get("config")}
+    for repo, info in (meta.get("git") or {}).items():
+        flat[f"{repo} head"] = (info or {}).get("head")
+        flat[f"{repo} dirty flag"] = (info or {}).get("dirty")
+    for stage, version in (meta.get("prompt_versions") or {}).items():
+        flat[f"prompt version of {stage}"] = version
+    for name in ("api_image_id", "ml_image_id"):
+        flat[f"docker {name}"] = (meta.get("docker") or {}).get(name)
+    for role in ("generator", "judge"):
+        for key in ("deployment", "model", "model_version"):
+            flat[f"{role} {key}"] = (meta.get(role) or {}).get(key)
+    return flat
 
 
-def estimate_cost(
-    input_tokens: int, output_tokens: int, input_price_per_1k: float, output_price_per_1k: float
-) -> float:
-    return (input_tokens / 1000) * input_price_per_1k + (output_tokens / 1000) * output_price_per_1k
+def incomparable(first: dict[str, Any], other: dict[str, Any]) -> list[str]:
+    """What differs between the first recorded meta and a later one in a way that makes their runs incomparable."""
+    a, b = _flat(first), _flat(other)
+    return [f"{name} changed: {a.get(name)!r} -> {b.get(name)!r}" for name in sorted(a.keys() | b.keys()) if a.get(name) != b.get(name)]
 
 
-def _distribution(records: list[RunRecord], field: str) -> Counter:
-    return Counter(getattr(r, field) for r in records)
-
-
-def load_run_meta(out_dir: Path) -> dict | None:
-    path = out_dir / "run_meta.json"
+def meta_warnings(directory: Path) -> list[str]:
+    """Warnings for the top of a report: every later meta of the run directory compared with the first."""
+    path = directory / "run_meta.json"
     if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _run_meta_md(meta: dict) -> list[str]:
-    lines = ["## Run conditions", ""]
-    lines.append(f"- run_id: `{meta.get('run_id')}`")
-    lines.append(f"- configuration: **{meta.get('configuration')}**")
-    lines.append(f"- deployment: **{meta.get('deployment')}** (model_version: {meta.get('model_version')})")
-    lines.append(f"- endpoint: {meta.get('endpoint')}")
-    lines.append(f"- guardrails: {meta.get('guardrails')}")
-    lines.append(f"- domain_version: {meta.get('domain_version')}")
-    lines.append(f"- dataset: {meta.get('dataset_path')} (sha256 {meta.get('dataset_sha256', '')[:12]}…, "
-                 f"{meta.get('dataset_size')} bytes)")
-    git_commits = meta.get("git_commits", {})
-    git_dirty = meta.get("git_dirty", {})
-    for repo, sha in git_commits.items():
-        dirty = git_dirty.get(repo)
-        dirty_str = " (dirty)" if dirty else ("" if dirty is False else " (unknown)")
-        lines.append(f"- {repo}: `{sha}`{dirty_str}")
-    lines.append(f"- concurrency: {meta.get('concurrency')}, project_timeout: {meta.get('project_timeout')}s, "
-                 f"poll_interval: {meta.get('poll_interval')}s")
-    lines.append(f"- worker_replicas: {meta.get('worker_replicas')}")
-    lines.append(f"- mode: {meta.get('mode')}, started_at: {meta.get('started_at')}, "
-                 f"finished_at: {meta.get('finished_at')}")
-    warnings = meta.get("meta_warnings") or []
-    if warnings:
-        lines.append("")
-        lines.append("**meta_warnings** (fields that couldn't be determined, and why):")
-        for w in warnings:
-            lines.append(f"- {w}")
-    lines.append("")
+        return ["no run_meta.json in this directory: the conditions of these runs were not recorded"]
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    lines = []
+    for number, resume in enumerate(meta.get("resumes", []), start=1):
+        for difference in incomparable(meta, resume):
+            lines.append(f"resume {number} ({resume.get('started_at')}): {difference}")
     return lines
 
 
-def build_summary_md(
-    records: list[RunRecord],
-    totals: TokenTotals,
-    *,
-    input_price_per_1k: float | None,
-    output_price_per_1k: float | None,
-    run_meta: dict | None = None,
-) -> str:
-    by_status = Counter(r.status for r in records)
-    durations = [r.duration_seconds for r in records if r.duration_seconds is not None]
-    avg_duration = sum(durations) / len(durations) if durations else 0.0
-
-    lines = ["# Baseline experiment — summary", ""]
-    if run_meta is not None:
-        lines.extend(_run_meta_md(run_meta))
-    else:
-        lines.append("_(no run_meta.json found in this results directory — conditions unknown)_")
-        lines.append("")
-
-    lines.append(f"Total runs recorded: **{len(records)}**")
-    lines.append("")
-    lines.append("## Outcomes")
-    lines.append("")
-    lines.append("| status | count |")
-    lines.append("|---|---|")
-    for status in ("completed", "failed", "timeout"):
-        lines.append(f"| {status} | {by_status.get(status, 0)} |")
-    lines.append("")
-    lines.append(f"Average duration: **{avg_duration:.0f}s** ({avg_duration / 60:.1f} min)")
-    lines.append("")
-
-    lines.append("## Tokens & retries (from metrics.csv / Langfuse)")
-    lines.append("")
-    lines.append(f"- Block rows exported: {totals.rows}")
-    lines.append(f"- Input tokens: {totals.input_tokens:,}")
-    lines.append(f"- Output tokens: {totals.output_tokens:,}")
-    lines.append(f"- Total generation retries: {totals.total_retries} "
-                 f"({totals.rows_with_retries}/{totals.rows} blocks needed at least one)")
-    lines.append(f"- Average retries per block: {totals.avg_retries_per_block:.2f}")
-    lines.append(f"- Average LLM call latency: {totals.avg_latency_ms:.0f}ms")
-    if input_price_per_1k is not None and output_price_per_1k is not None:
-        cost = estimate_cost(totals.input_tokens, totals.output_tokens, input_price_per_1k, output_price_per_1k)
-        lines.append(
-            f"- Estimated cost: **${cost:,.2f}** "
-            f"(@ ${input_price_per_1k}/1k input, ${output_price_per_1k}/1k output)"
-        )
-    else:
-        lines.append("- Estimated cost: n/a (no --input-price-per-1k/--output-price-per-1k given)")
-    lines.append("")
-
-    lines.append("## Dataset label distribution (all recorded runs)")
-    for field in ("expected_pattern", "detail_level", "market_type", "industry"):
-        lines.append("")
-        lines.append(f"### {field}")
-        lines.append("")
-        lines.append("| value | count |")
-        lines.append("|---|---|")
-        for value, count in sorted(_distribution(records, field).items()):
-            lines.append(f"| {value} | {count} |")
-
-    return "\n".join(lines) + "\n"
+def load_latest(path: Path) -> list[dict[str, Any]]:
+    latest: dict[tuple[str, int], dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+            latest[(record["idea_id"], int(record["repeat"]))] = record
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            continue
+    return list(latest.values())
 
 
-def generate_report(
-    runs_path: Path,
-    metrics_path: Path,
-    out_path: Path,
-    *,
-    input_price_per_1k: float | None,
-    output_price_per_1k: float | None,
-) -> None:
-    records = list(load_existing_results(runs_path).values())
-    totals = load_metrics_totals(metrics_path)
-    run_meta = load_run_meta(runs_path.parent)
-    md = build_summary_md(
-        records, totals, input_price_per_1k=input_price_per_1k, output_price_per_1k=output_price_per_1k,
-        run_meta=run_meta,
-    )
-    out_path.write_text(md, encoding="utf-8")
-    print(f"[report] wrote {out_path}")
+def quartiles(values: list[float]) -> tuple[float, float, float] | None:
+    """(q1, median, q3) with the inclusive method; None for no values."""
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0], values[0], values[0]
+    q1, median, q3 = statistics.quantiles(values, n=4, method="inclusive")
+    return q1, median, q3
 
 
-def build_compare_md(
-    results_dirs: list[Path],
-    *,
-    input_price_per_1k: float | None,
-    output_price_per_1k: float | None,
-) -> str:
-    lines = ["# Comparison across runs", ""]
-    if input_price_per_1k is None or output_price_per_1k is None:
-        lines.append("_(no --input-price-per-1k/--output-price-per-1k given — cost column omitted)_")
-    lines.append("")
-    header = [
-        "results_dir", "configuration", "deployment", "model_version",
-        "completed", "failed", "timeout", "avg_duration_s",
-        "input_tokens", "output_tokens", "total_retries", "avg_retries_per_block",
-        "avg_latency_ms",
-    ]
-    if input_price_per_1k is not None and output_price_per_1k is not None:
-        header.append("cost_usd")
-    lines.append("| " + " | ".join(header) + " |")
-    lines.append("|" + "---|" * len(header))
-
-    for results_dir in results_dirs:
-        records = list(load_existing_results(results_dir / "runs.jsonl").values())
-        totals = load_metrics_totals(results_dir / "metrics.csv")
-        meta = load_run_meta(results_dir)
-        by_status = Counter(r.status for r in records)
-        durations = [r.duration_seconds for r in records if r.duration_seconds is not None]
-        avg_duration = sum(durations) / len(durations) if durations else 0.0
-
-        row = [
-            results_dir.name,
-            (meta or {}).get("configuration", "?"),
-            (meta or {}).get("deployment", "?"),
-            str((meta or {}).get("model_version", "?")),
-            str(by_status.get("completed", 0)),
-            str(by_status.get("failed", 0)),
-            str(by_status.get("timeout", 0)),
-            f"{avg_duration:.0f}",
-            f"{totals.input_tokens:,}",
-            f"{totals.output_tokens:,}",
-            str(totals.total_retries),
-            f"{totals.avg_retries_per_block:.2f}",
-            f"{totals.avg_latency_ms:.0f}",
-        ]
-        if input_price_per_1k is not None and output_price_per_1k is not None:
-            cost = estimate_cost(totals.input_tokens, totals.output_tokens, input_price_per_1k, output_price_per_1k)
-            row.append(f"{cost:,.2f}")
-        lines.append("| " + " | ".join(row) + " |")
-
-    return "\n".join(lines) + "\n"
+def failure_reason(record: dict[str, Any]) -> str | None:
+    """Why a run counts as a failure: its status and first error, or the first problem of a completed project's checks."""
+    if record["status"] != "completed":
+        error = (record.get("errors") or [""])[0]
+        return f"{record['status']}: {error[:120]}".rstrip(": ")
+    checks = record.get("checks") or {}
+    if not checks.get("ok", True):
+        return f"checks: {checks['problems'][0][:120]}"
+    return None
 
 
-def generate_compare(
-    results_dirs: list[Path],
-    out_path: Path,
-    *,
-    input_price_per_1k: float | None,
-    output_price_per_1k: float | None,
-) -> None:
-    md = build_compare_md(
-        results_dirs, input_price_per_1k=input_price_per_1k, output_price_per_1k=output_price_per_1k
-    )
-    out_path.write_text(md, encoding="utf-8")
-    print(f"[compare] wrote {out_path}")
+def summarize(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """One block of numbers per idea id plus "ALL"."""
+    groups: dict[str, list[dict[str, Any]]] = {ALL: records}
+    for record in records:
+        groups.setdefault(record["idea_id"], []).append(record)
+    summary: dict[str, dict[str, Any]] = {}
+    for scope, group in groups.items():
+        completed = [r for r in group if r["status"] == "completed"]
+        walls = [r["wall_clock_s"] for r in group if r.get("wall_clock_s") is not None]
+        tokens = [r["tokens"]["total"] for r in group if r.get("tokens")]
+        cycles = [c for r in group if r.get("shape") for c in r["shape"]["cycles"]]
+        violations: Counter[tuple[str, str]] = Counter()
+        for r in group:
+            for row in r.get("rows", []):
+                for v in row["violations"]:
+                    violations[(v["rule_id"], v["severity"])] += v["count"]
+        summary[scope] = {
+            "n": len(group),
+            "completed": len(completed),
+            "completion_rate": len(completed) / len(group),
+            "wall": quartiles(walls),
+            "tokens": quartiles(tokens),
+            "tokens_n": len(tokens),
+            "iterations": Counter(c["iterations"] for c in cycles),
+            "final_version": Counter(c["final_version"] for c in cycles if c["final_version"] is not None),
+            "violations": violations,
+            "failures": Counter(reason for r in group if (reason := failure_reason(r))),
+        }
+    return summary
+
+
+def _fmt(quartile: tuple[float, float, float] | None, pick: int, digits: int = 1) -> str:
+    return "-" if quartile is None else f"{quartile[pick]:,.{digits}f}"
+
+
+def _dist(counter: Counter) -> str:
+    return " ".join(f"{k}:{v}" for k, v in sorted(counter.items())) or "-"
+
+
+def render(summary: dict[str, dict[str, Any]]) -> str:
+    scopes = [s for s in summary if s != ALL] + [ALL]
+    rows = [("scope", "n", "completed", "rate", "wall median [IQR] s", "tokens median [IQR]", "iterations", "final version")]
+    for scope in scopes:
+        s = summary[scope]
+        rows.append((
+            scope, str(s["n"]), str(s["completed"]), f"{s['completion_rate']:.0%}",
+            f"{_fmt(s['wall'], 1)} [{_fmt(s['wall'], 0)}-{_fmt(s['wall'], 2)}]",
+            f"{_fmt(s['tokens'], 1, 0)} [{_fmt(s['tokens'], 0, 0)}-{_fmt(s['tokens'], 2, 0)}] (n={s['tokens_n']})" if s["tokens"] else "- (no token data)",
+            _dist(s["iterations"]), _dist(s["final_version"]),
+        ))
+    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+    lines = ["  ".join(cell.ljust(widths[i]) for i, cell in enumerate(r)).rstrip() for r in rows]
+    overall = summary[ALL]
+    lines.append("\nviolations per rule id (all runs):")
+    lines += [f"  {n:>5}  {rule}  [{severity}]" for (rule, severity), n in overall["violations"].most_common()] or ["  none"]
+    lines.append("\nfailure reasons (all runs):")
+    lines += [f"  {n:>5}  {reason}" for reason, n in overall["failures"].most_common()] or ["  none"]
+    return "\n".join(lines)
+
+
+def write_csv(summary: dict[str, dict[str, Any]], out_dir: Path) -> list[Path]:
+    """summary.csv, distributions.csv, violations.csv and failures.csv next to the results."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+
+    def write(name: str, header: tuple[str, ...], rows: list[tuple]) -> None:
+        path = out_dir / name
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(header)
+            writer.writerows(rows)
+        paths.append(path)
+
+    def cells(q: tuple[float, float, float] | None, digits: int) -> tuple:
+        return ("", "", "") if q is None else tuple(round(v, digits) for v in (q[1], q[0], q[2]))
+
+    write("summary.csv", SUMMARY_COLUMNS, [
+        (scope, s["n"], s["completed"], round(s["completion_rate"], 4), *cells(s["wall"], 2), s["tokens_n"], *cells(s["tokens"], 0))
+        for scope, s in summary.items()
+    ])
+    write("distributions.csv", ("scope", "metric", "value", "count"), [
+        (scope, metric, value, count)
+        for scope, s in summary.items() for metric in ("iterations", "final_version") for value, count in sorted(s[metric].items())
+    ])
+    write("violations.csv", ("scope", "rule_id", "severity", "count"), [
+        (scope, rule, severity, count) for scope, s in summary.items() for (rule, severity), count in sorted(s["violations"].items())
+    ])
+    write("failures.csv", ("scope", "reason", "count"), [
+        (scope, reason, count) for scope, s in summary.items() for reason, count in s["failures"].most_common()
+    ])
+    return paths
