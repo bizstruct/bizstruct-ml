@@ -1,6 +1,4 @@
-"""Baseline-experiment tooling for bizstruct-ml.
+"""Experiment runner: runs ideas through a configured system over be's public API and reports the results.
 
-Not part of the worker package: nothing under `bizstruct_ml` imports from
-here, and this directory is not copied into the worker's Docker image (see
-`.dockerignore` — kept separate on purpose, see README.md).
+Imports no ml worker code; see README.md ("Running experiments").
 """
