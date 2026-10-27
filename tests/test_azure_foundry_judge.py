@@ -83,3 +83,62 @@ async def test_empty_reply_is_an_error():
     judge = make(lambda request: httpx.Response(200, json=completion(None)))
     with pytest.raises(JudgeModelError):
         await judge.complete_json(system="s", user="u")
+
+
+def rate_limited_then_ok(retry_after: str | None, failures: int):
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) <= failures:
+            headers = {"retry-after": retry_after} if retry_after is not None else {}
+            return httpx.Response(429, headers=headers, json={"error": {"message": "slow down"}})
+        return httpx.Response(200, json=completion('{"score": 5, "violations": []}'))
+
+    return calls, handler
+
+
+async def test_429_backs_off_for_retry_after_and_then_succeeds():
+    calls, handler = rate_limited_then_ok("7", failures=2)
+    slept: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    reply = await make(handler, sleep=sleep).complete_json(system="s", user="u")
+    assert reply == '{"score": 5, "violations": []}'
+    assert len(calls) == 3
+    assert slept == [7.0, 7.0]
+
+
+async def test_429_without_retry_after_uses_exponential_backoff():
+    _, handler = rate_limited_then_ok(None, failures=2)
+    slept: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    await make(handler, sleep=sleep).complete_json(system="s", user="u")
+    assert slept == [2.0, 4.0]
+
+
+async def test_retry_after_is_capped():
+    _, handler = rate_limited_then_ok("3600", failures=1)
+    slept: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    await make(handler, sleep=sleep, max_retry_after_seconds=30.0).complete_json(system="s", user="u")
+    assert slept == [30.0]
+
+
+async def test_persistent_429_ends_as_judge_model_error():
+    calls, handler = rate_limited_then_ok("1", failures=99)
+
+    async def sleep(seconds: float) -> None:
+        pass
+
+    with pytest.raises(JudgeModelError):
+        await make(handler, sleep=sleep, rate_limit_retries=3).complete_json(system="s", user="u")
+    assert len(calls) == 4  # the first try plus three retries
