@@ -6,7 +6,8 @@ from bizstruct_ml.core.stage_runner import StageContext
 from bizstruct_ml.llm.prompts._shared import field_guide, language_rule
 
 # 1 = the text merged in PR #5.
-PROMPT_VERSION = "1"
+# 2 = adds `project_title`, the name the project is shown under.
+PROMPT_VERSION = "2"
 
 SYSTEM = f"""\
 You normalise a startup idea into a Brief. The Brief is an extractor and classifier of what the user wrote, \
@@ -21,6 +22,9 @@ each candidate will get its own empathy map, so make them genuinely different se
 4. Existing resources or assets, only if the user mentioned them (an empty list otherwise).
 5. A monetization hint, only if the description contains one (null otherwise).
 6. Gaps: an explicit list of what the description does not say and later steps will have to assume.
+7. A project title: the short name a person would give this project, a noun phrase of two to six words \
+that says what it is (for example "Reminders for auto repair shops"). Not a sentence, no trailing period, \
+no quotation marks, and no invented brand name.
 
 Fields:
 {field_guide(Brief)}

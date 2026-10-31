@@ -57,11 +57,16 @@ def test_the_examples_do_not_use_the_domains_of_the_evaluation_ideas():
         assert word not in text.replace("other parents", "")  # "other parents" is the says_and_does example
 
 
+def test_the_brief_prompt_asks_for_a_short_project_title():
+    text = brief.SYSTEM
+    assert "project title" in text and "project_title" in text  # the instruction and the field guide entry
+
+
 def test_prompt_versions():
-    assert (brief.PROMPT_VERSION, ideation.PROMPT_VERSION) == ("1", "1")  # text unchanged since #5
+    assert (brief.PROMPT_VERSION, ideation.PROMPT_VERSION) == ("2", "1")  # brief 2 adds project_title; ideation unchanged since #5
     assert (empathy_map.PROMPT_VERSION, customer_scenario.PROMPT_VERSION) == ("2", "2")
     assert {s: g.prompt_version for s, g in SLICE_1_GENERATORS.items()} == {
-        Stage.BRIEF: "1", Stage.EMPATHY_MAP: "2", Stage.CUSTOMER_SCENARIO: "2", Stage.IDEATION: "1",
+        Stage.BRIEF: "2", Stage.EMPATHY_MAP: "2", Stage.CUSTOMER_SCENARIO: "2", Stage.IDEATION: "1",
     }
 
 
